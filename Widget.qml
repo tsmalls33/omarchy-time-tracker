@@ -44,16 +44,13 @@ Panel {
     // ---------- bar presence: hidden while idle, peeking with the center hover ----------
     readonly property bool revealHeld: !!bar && bar.centerSectionRevealHeld === true && bar.centerHoverRevealSuppressed !== true
     readonly property bool shown: tracking || revealHeld || opened || errorText !== ""
-    readonly property int maxLabel: Math.max(6, Number(setting("maxProjectLength", 24)) || 24)
-    readonly property string activeName: tracking ? (running.project || running.company || "") : ""
-    readonly property string barLabel: tracking && !vertical
-        ? (activeName !== "" ? truncate(activeName, maxLabel) + "  " : "") + duration(elapsed) : ""
+    // Only the elapsed time shows in the bar; the tooltip names the project.
+    readonly property string barLabel: tracking && !vertical ? duration(elapsed) : ""
 
     implicitWidth: shown ? button.implicitWidth : 0
     implicitHeight: shown ? (vertical ? button.implicitHeight : barSize) : 0
     visible: shown
 
-    function truncate(s, max) { s = String(s || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s }
     function duration(seconds) {
         var s = Math.floor(seconds || 0)
         return Math.floor(s / 3600) + ":" + String(Math.floor(s / 60) % 60).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0")
@@ -123,7 +120,12 @@ Panel {
                         var parts = [r.added + " new", r.updated + " updated", r.removed + " removed"]
                         if (r.new_companies) parts.push(r.new_companies + " new companies")
                         if (r.new_projects) parts.push(r.new_projects + " new projects")
-                        root.syncMessage = "Synced: " + parts.join(", ") + (r.skipped_running ? " (running Clockify timer skipped)" : "")
+                        var sent = ["sent " + (r.pushed || 0)]
+                        if (r.push_waiting) sent.push(r.push_waiting + " waiting (rate limit, sync again later)")
+                        if (r.push_overlaps) sent.push(r.push_overlaps + " not sent: overlap Clockify time")
+                        root.syncMessage = "Received " + parts.join(", ") + " · " + sent.join(", ")
+                            + (r.skipped_running ? " · running Clockify timer skipped" : "")
+                        if (r.push_error) root.errorText = "Sending stopped: " + r.push_error
                     }
                     if (data.result && data.result.pdf_path) root.pdfPath = data.result.pdf_path
                     if (data.result && data.result.obsidian_path) {
@@ -153,16 +155,18 @@ Panel {
         id: labelMetrics
         font.family: bar ? bar.fontFamily : Style.font.family
         font.pixelSize: button.fontSize
-        text: root.barLabel
+        text: root.barLabel !== "" ? "󱎫  " + root.barLabel : ""
     }
 
     BarIconButton {
         id: button
         anchors.fill: parent
         bar: root.bar
-        text: "󱎫"
-        labelText: root.barLabel
-        slotSize: root.barLabel !== "" ? Style.bar.iconSlot + labelMetrics.advanceWidth + Style.space(10) : Style.bar.iconSlot
+        // While tracking the icon rides at the front of the label, so it
+        // reads "icon  project  0:12:34" (the kit puts a label before its icon).
+        text: root.barLabel !== "" ? "" : "󱎫"
+        labelText: root.barLabel !== "" ? "󱎫  " + root.barLabel : ""
+        slotSize: root.barLabel !== "" ? labelMetrics.advanceWidth + Style.space(14) : Style.bar.iconSlot
         dimmed: !root.tracking && root.errorText === ""
         active: root.errorText !== "" && !root.tracking
         tooltipText: root.tracking

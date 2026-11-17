@@ -30,7 +30,7 @@ Column {
 
     // Keys go to whatever is being typed in or picked, not the panel.
     readonly property bool editing: noteField.activeFocus || newCompanyField.activeFocus || newProjectField.activeFocus
-        || reportDate.activeFocus || vaultPath.activeFocus || deleteConfirmation.activeFocus
+        || reportDate.activeFocus || vaultPath.activeFocus || pushSince.activeFocus || deleteConfirmation.activeFocus
         || companyPicker.popupOpen || projectPicker.popupOpen || period.popupOpen || scope.popupOpen || recordPicker.popupOpen
 
     readonly property var companyOptions: owner.companies.map(function(c) { return { value: c.name, label: c.name } })
@@ -309,6 +309,7 @@ Column {
             : (form.owner.trackerState.clockify_synced_at
                ? "Clockify last synced " + form.owner.trackerState.clockify_synced_at.replace("T", " ").slice(0, 16) + " UTC"
                : "Clockify never synced")
+            + (form.owner.trackerState.clockify_push_since ? " · sends sessions from " + form.owner.trackerState.clockify_push_since : "")
     }
 
     PlainLabel {
@@ -410,6 +411,35 @@ Column {
             width: parent.width
             wrapMode: Text.WrapAnywhere
             text: "Saved " + form.owner.pdfPath
+        }
+
+        PanelSeparator { width: parent.width; foreground: form.fg }
+
+        // Clockify: which local sessions Sync Clockify sends
+        PanelSectionHeader { text: "Clockify"; foreground: form.fg; fontFamily: form.font }
+        Caption {
+            width: parent.width
+            text: "Sync Clockify sends finished sessions tracked here from this date on (default: the day of your first sync). Earlier ones stay local."
+        }
+        Row {
+            width: parent.width
+            spacing: Style.space(6)
+            TextField {
+                id: pushSince
+                width: parent.width - savePushSince.width - parent.spacing
+                text: form.owner.trackerState.clockify_push_since || ""
+                placeholderText: "YYYY-MM-DD"
+                maximumLength: 10
+                foreground: form.fg
+                font.family: form.font
+                onAccepted: savePushSince.clicked()
+            }
+            Action {
+                id: savePushSince
+                text: "Save"
+                enabled: !form.owner.busy && /^\d{4}-\d{2}-\d{2}$/.test(pushSince.text.trim())
+                onClicked: form.owner.request(["clockify-push-since", pushSince.text.trim()])
+            }
         }
 
         PanelSeparator { width: parent.width; foreground: form.fg }

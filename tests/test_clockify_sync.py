@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 import subprocess
 import sys
@@ -170,3 +170,93 @@ class SchemaTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PushTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.db = tracker.connect(Path(self.folder.name) / 't.db')
+        self.calls = []
+        self.ids = iter('%024x' % i for i in range(1, 1000))
+        self.fail_on = None
+
+    def tearDown(self):
+        self.db.close()
+        self.folder.cleanup()
+
+    def run_cli(self, *argv, quiet_id=False):
+        self.calls.append(argv)
+        if self.fail_on and argv[0] == self.fail_on:
+            raise ValueError('Clockify rate limit reached')
+        return next(self.ids)
+
+    def session(self, company, project, start, end, note='', clockify_id=None):
+        cid = clockify_sync.company_id(self.db, company, {})
+        pid = clockify_sync.project_id(self.db, cid, project, {})
+        return self.db.execute('INSERT INTO sessions(company_id,project_id,start,end,note,clockify_id) VALUES (?,?,?,?,?,?)',
+                               (cid, pid, start, end, note, clockify_id)).lastrowid
+
+    def push(self, **kw):
+        self.db.execute('BEGIN IMMEDIATE')
+        result = clockify_sync.push(self.db, tracker.setting, run=self.run_cli, today=date(2026, 11, 17), **kw)
+        self.db.commit()
+        return result
+
+    def epoch(self, text):
+        return datetime.fromisoformat(text).timestamp()
+
+    def test_creates_missing_client_and_project_then_entry(self):
+        sid = self.session('Acme', 'Site', self.epoch('2026-11-17T09:00:00+00:00'), self.epoch('2026-11-17T10:00:00+00:00'), 'Work -d x')
+        result = self.push()
+        self.assertEqual((result['pushed'], result['created_clients'], result['created_projects']), (1, 1, 1))
+        self.assertEqual(self.calls[0], ('client', 'add', '--name=Acme'))
+        self.assertEqual(self.calls[1][:3], ('project', 'add', '--name=Site'))
+        self.assertIn('--client=' + '%024x' % 1, self.calls[1])
+        manual = self.calls[2]
+        self.assertEqual(manual[0], 'manual')
+        self.assertIn('--when=2026-11-17 09:00:00', manual)
+        self.assertIn('--when-to-close=2026-11-17 10:00:00', manual)
+        self.assertIn('--description=Work -d x', manual)   # one argv element, never re-parsed as flags
+        self.assertIn('--project=' + '%024x' % 2, manual)
+        self.assertEqual(self.db.execute('SELECT clockify_id FROM sessions WHERE id=?', (sid,)).fetchone()[0], '%024x' % 3)
+
+    def test_never_sends_twice_and_reuses_known_ids(self):
+        for h in (9, 11):
+            self.session('Acme', 'Site', self.epoch(f'2026-11-17T{h:02d}:00:00+00:00'), self.epoch(f'2026-11-17T{h:02d}:30:00+00:00'))
+        self.push()
+        self.assertEqual([c[0] for c in self.calls], ['client', 'project', 'manual', 'manual'])
+        self.calls.clear()
+        self.assertEqual(self.push()['pushed'], 0)
+        self.assertEqual(self.calls, [])
+
+    def test_only_from_push_since_and_finished(self):
+        self.session('Acme', None, self.epoch('2026-11-10T09:00:00+00:00'), self.epoch('2026-11-10T10:00:00+00:00'))
+        self.session('Acme', None, self.epoch('2026-11-17T12:00:00+00:00'), None)
+        result = self.push()
+        self.assertEqual(result['pushed'], 0)
+        self.assertEqual(tracker.setting(self.db, 'clockify_push_since'), '2026-11-17')
+
+    def test_overlap_with_clockify_time_is_not_sent(self):
+        self.session('Acme', 'Site', self.epoch('2026-11-17T09:00:00+00:00'), self.epoch('2026-11-17T10:00:00+00:00'), clockify_id='f' * 24)
+        self.session('Acme', 'Site', self.epoch('2026-11-17T09:30:00+00:00'), self.epoch('2026-11-17T10:30:00+00:00'))
+        result = self.push()
+        self.assertEqual((result['pushed'], result['push_overlaps']), (0, 1))
+
+    def test_no_client_company_and_no_project(self):
+        self.session(clockify_sync.NO_CLIENT, None, self.epoch('2026-11-17T09:00:00+00:00'), self.epoch('2026-11-17T10:00:00+00:00'))
+        result = self.push()
+        self.assertEqual([c[0] for c in self.calls], ['manual'])
+        self.assertFalse(any(a.startswith('--project') for a in self.calls[0]))
+        self.assertEqual(result['pushed_without_project'], 1)
+
+    def test_limit_and_error_keep_what_was_sent(self):
+        for h in range(9, 13):
+            self.session('Acme', 'Site', self.epoch(f'2026-11-17T{h:02d}:00:00+00:00'), self.epoch(f'2026-11-17T{h:02d}:30:00+00:00'))
+        result = self.push(limit=2)
+        self.assertEqual((result['pushed'], result['push_waiting']), (2, 2))
+        self.fail_on = 'manual'
+        result = self.push()
+        self.assertEqual((result['pushed'], result['push_waiting']), (0, 2))
+        self.assertIn('rate limit', result['push_error'])
+        sent = self.db.execute('SELECT count(*) FROM sessions WHERE clockify_id IS NOT NULL').fetchone()[0]
+        self.assertEqual(sent, 2)
