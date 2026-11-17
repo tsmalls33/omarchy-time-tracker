@@ -225,7 +225,9 @@ def local_midnight(day):
 
 
 def clockify_time(epoch):
-    return datetime.fromtimestamp(epoch, timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    """Local wall-clock time: clockify-cli reads --when/--when-to-close in the
+    system's local zone whatever --tz says (--tz only affects its output)."""
+    return datetime.fromtimestamp(epoch).strftime('%Y-%m-%d %H:%M:%S')
 
 
 def push(db, setting, run=run_cli, today=None, limit=PUSH_LIMIT):
@@ -278,7 +280,7 @@ def push(db, setting, run=run_cli, today=None, limit=PUSH_LIMIT):
                 projects[row['project_id']] = project
             else:
                 stats['pushed_without_project'] += 1   # Clockify ties a client to time only through a project
-            argv = ['manual', '--tz=UTC', '--when=' + clockify_time(row['start']),
+            argv = ['manual', '--when=' + clockify_time(row['start']),
                     '--when-to-close=' + clockify_time(row['end']), '--description=' + (row['note'] or '')]
             if project:
                 argv.append('--project=' + project)

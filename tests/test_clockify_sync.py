@@ -214,8 +214,11 @@ class PushTests(unittest.TestCase):
         self.assertIn('--client=' + '%024x' % 1, self.calls[1])
         manual = self.calls[2]
         self.assertEqual(manual[0], 'manual')
-        self.assertIn('--when=2026-11-17 09:00:00', manual)
-        self.assertIn('--when-to-close=2026-11-17 10:00:00', manual)
+        # clockify-cli parses these as local time, so they must be local.
+        local = lambda t: datetime.fromtimestamp(self.epoch(t)).strftime('%Y-%m-%d %H:%M:%S')
+        self.assertIn('--when=' + local('2026-11-17T09:00:00+00:00'), manual)
+        self.assertIn('--when-to-close=' + local('2026-11-17T10:00:00+00:00'), manual)
+        self.assertFalse(any(a.startswith('--tz') for a in manual))
         self.assertIn('--description=Work -d x', manual)   # one argv element, never re-parsed as flags
         self.assertIn('--project=' + '%024x' % 2, manual)
         self.assertEqual(self.db.execute('SELECT clockify_id FROM sessions WHERE id=?', (sid,)).fetchone()[0], '%024x' % 3)
