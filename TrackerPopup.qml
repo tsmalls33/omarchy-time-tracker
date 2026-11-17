@@ -105,6 +105,7 @@ Column {
         bordered: true
         foreground: form.fg
         fontFamily: form.font
+        opacity: enabled ? 1 : 0.4   // the kit barely marks a disabled button
     }
 
     // ---------- hero: what is running ----------
@@ -397,6 +398,7 @@ Column {
             }
             Action {
                 text: "Obsidian note"; iconText: "󰠮"
+                tooltipText: form.owner.trackerState.obsidian_vault ? "Write this report into the vault" : "Save a vault folder under Obsidian first"
                 enabled: !form.owner.busy && !!form.owner.trackerState.obsidian_vault && (scope.value === "all" || form.companyName !== "")
                 onClicked: form.report("obsidian")
             }
