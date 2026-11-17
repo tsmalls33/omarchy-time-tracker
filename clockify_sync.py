@@ -2,10 +2,11 @@
 
 Clockify stays the system of record for whatever is tracked there (another
 machine, the phone app); this copies those entries in on demand so reports
-cover everything. It runs `clockify-cli report <since> today --json`, which
-already carries each entry's project and client, so a sync is one CLI call
-(the CLI pages through entries itself). The CLI holds the API key; this
-module never sees it.
+cover everything. A sync makes three clockify-cli calls: `client list`,
+`project list` (so new clients and projects arrive even before any time is
+logged against them) and `report <since> today` for the entries (the CLI
+pages through those itself). The CLI holds the API key; this module never
+sees it.
 
 Mapping: Clockify client -> company, project -> project, description -> note.
 Entries are matched on their Clockify id: edits in Clockify update the local
@@ -48,11 +49,20 @@ def parse_time(value):
 
 
 def fetch(since, until):
+    return run_cli('report', since, until)
+
+
+def fetch_catalog():
+    """All clients and (unarchived) projects in the workspace."""
+    return run_cli('client', 'list'), run_cli('project', 'list')
+
+
+def run_cli(*argv):
     cli = shutil.which('clockify-cli')
     if not cli:
         raise ValueError('clockify-cli is not installed (AUR: clockify-cli).')
     try:
-        done = subprocess.run([cli, '--interactive=0', 'report', since, until, '--json'],
+        done = subprocess.run([cli, '--interactive=0', *argv, '--json'],
                               capture_output=True, timeout=CLI_TIMEOUT, check=False)
     except subprocess.TimeoutExpired:
         raise ValueError(f'clockify-cli did not finish within {CLI_TIMEOUT}s.')
@@ -65,12 +75,12 @@ def fetch(since, until):
     if len(done.stdout) > MAX_OUTPUT:
         raise ValueError('clockify-cli returned too much data.')
     try:
-        entries = json.loads(done.stdout or b'[]')
+        items = json.loads(done.stdout or b'[]')
     except ValueError:
         raise ValueError('clockify-cli did not return JSON.')
-    if not isinstance(entries, list):
+    if not isinstance(items, list):
         raise ValueError('clockify-cli returned an unexpected shape.')
-    return entries
+    return items
 
 
 def company_id(db, name, cache):
@@ -91,7 +101,28 @@ def project_id(db, cid, name, cache):
     return cache[key]
 
 
-def sync(db, setting, since=None, today=None, fetcher=fetch, dry_run=False):
+def import_catalog(db, clients, projects, companies, project_cache, stats):
+    """Create any Clockify client (as a company) or project not here yet."""
+    for client in clients:
+        name = clean(client.get('name'), 200) if isinstance(client, dict) else ''
+        if name and not (isinstance(client, dict) and client.get('archived') is True):
+            if name.casefold() not in companies and not db.execute(
+                    'SELECT 1 FROM companies WHERE name=? COLLATE NOCASE', (name,)).fetchone():
+                stats['new_companies'] += 1
+            company_id(db, name, companies)
+    for project in projects:
+        if not isinstance(project, dict) or project.get('archived') is True:
+            continue
+        name = clean(project.get('name'), 200)
+        if not name:
+            continue
+        cid = company_id(db, clean(project.get('clientName'), 200) or NO_CLIENT, companies)
+        if not db.execute('SELECT 1 FROM projects WHERE company_id=? AND name=? COLLATE NOCASE', (cid, name)).fetchone():
+            stats['new_projects'] += 1
+        project_id(db, cid, name, project_cache)
+
+
+def sync(db, setting, since=None, today=None, fetcher=fetch, catalog=fetch_catalog, dry_run=False):
     """Run inside the caller's transaction. Returns counts for the bar."""
     today = today or date.today()
     if since is None:
@@ -99,11 +130,14 @@ def sync(db, setting, since=None, today=None, fetcher=fetch, dry_run=False):
         since = (date.fromisoformat(last) - timedelta(days=LOOKBACK_DAYS)).isoformat() if last else FIRST_SYNC
     else:
         since = date.fromisoformat(since).isoformat()
+    clients, projects_list = catalog()
     entries = fetcher(since, today.isoformat())
     window_lo = datetime.combine(date.fromisoformat(since), datetime.min.time()).astimezone().timestamp()
 
-    stats = dict(since=since, added=0, updated=0, removed=0, unchanged=0, skipped_running=0, skipped_invalid=0)
+    stats = dict(since=since, added=0, updated=0, removed=0, unchanged=0, skipped_running=0, skipped_invalid=0,
+                 new_companies=0, new_projects=0)
     companies, projects, seen = {}, {}, set()
+    import_catalog(db, clients, projects_list, companies, projects, stats)
     for entry in entries:
         if not isinstance(entry, dict):
             stats['skipped_invalid'] += 1

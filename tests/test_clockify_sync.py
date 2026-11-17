@@ -30,13 +30,14 @@ class ClockifySyncTests(unittest.TestCase):
         self.db.close()
         self.folder.cleanup()
 
-    def run_sync(self, entries, since=None, today=date(2026, 11, 17), **kw):
+    def run_sync(self, entries, since=None, today=date(2026, 11, 17), clients=(), projects=(), **kw):
         calls = []
 
         def fetcher(a, b):
             calls.append((a, b))
             return entries
-        result = clockify_sync.sync(self.db, tracker.setting, since=since, today=today, fetcher=fetcher, **kw)
+        result = clockify_sync.sync(self.db, tracker.setting, since=since, today=today, fetcher=fetcher,
+                                    catalog=lambda: (list(clients), list(projects)), **kw)
         return result, calls
 
     def sessions(self):
@@ -104,6 +105,19 @@ class ClockifySyncTests(unittest.TestCase):
         self.assertLessEqual(len(row[2]), 200)
         self.assertLessEqual(len(row[5]), 2000)
 
+    def test_clients_and_projects_arrive_without_entries(self):
+        result, _ = self.run_sync([], clients=[{'name': 'Newco'}, {'name': 'Gone', 'archived': True}, 'junk'],
+                                  projects=[{'name': 'Kickoff', 'clientName': 'Newco'}, {'name': 'Solo', 'clientName': ''},
+                                            {'name': 'Old', 'clientName': 'Newco', 'archived': True}])
+        names = {r[0] for r in self.db.execute('SELECT name FROM companies')}
+        self.assertEqual(names, {'Newco', clockify_sync.NO_CLIENT})
+        projects = {(r[0], r[1]) for r in self.db.execute(
+            'SELECT c.name, p.name FROM projects p JOIN companies c ON c.id=p.company_id')}
+        self.assertEqual(projects, {('Newco', 'Kickoff'), (clockify_sync.NO_CLIENT, 'Solo')})
+        self.assertEqual((result['new_companies'], result['new_projects']), (1, 2))
+        again, _ = self.run_sync([], clients=[{'name': 'newco'}], projects=[{'name': 'kickoff', 'clientName': 'Newco'}])
+        self.assertEqual((again['new_companies'], again['new_projects']), (0, 0))
+
     def test_dry_run_does_not_record_sync(self):
         self.run_sync([], dry_run=True)
         self.assertIsNone(tracker.setting(self.db, 'clockify_synced_through'))
@@ -130,6 +144,13 @@ class FetchTests(unittest.TestCase):
         for out in (b'{}', b'not json'):
             with self.subTest(out=out), self.assertRaises(ValueError):
                 self.fetch_with(0, out)
+
+    def test_catalog_calls_client_and_project_lists(self):
+        done = subprocess.CompletedProcess([], 0, b'[]', b'')
+        with mock.patch('shutil.which', return_value='/usr/bin/clockify-cli'), \
+                mock.patch('subprocess.run', return_value=done) as run:
+            self.assertEqual(clockify_sync.fetch_catalog(), ([], []))
+        self.assertEqual([c.args[0][2:] for c in run.call_args_list], [['client', 'list', '--json'], ['project', 'list', '--json']])
 
     def test_missing_cli(self):
         with mock.patch('shutil.which', return_value=None), self.assertRaisesRegex(ValueError, 'not installed'):
