@@ -112,6 +112,33 @@ python3 tracker.py report yearly --date 2026-01-01 --pdf --output "$HOME/Documen
 
 Run `python3 tracker.py --help` to list commands. Output is JSON.
 
+## Share one timer across machines
+
+Install the plugin on every machine, then pick one as the home machine that keeps the database. On each other machine, point the bar at it:
+
+```bash
+mkdir -p -m 700 ~/.config/omarchy/time-tracker
+printf '{"host": "you@home-machine"}\n' > ~/.config/omarchy/time-tracker/remote.json
+chmod 600 ~/.config/omarchy/time-tracker/remote.json
+```
+
+Every bar request then goes over SSH to the home machine's bridge, so all machines show the same running timer and history. Requirements:
+
+- Key-based SSH from this machine to the home machine with no prompt (`BatchMode`); a VPN such as Tailscale keeps the home machine reachable away from home. The home machine's host key must already be in `known_hosts`.
+- The plugin installed on the home machine at `~/.config/omarchy/plugins/peter.time-tracker/`. For another location, add `"bridge": "/path/to/bridge.py"` to `remote.json`.
+
+The request is sent on stdin, never in a command line. The home side runs `bridge.py --serve`, which accepts fewer actions than the local bar: no vault, timezone or automatic Obsidian settings, and no PDF or Obsidian exports, so nothing on the home machine writes files at a remote's request. Run those on the home machine. Connections are reused for 10 minutes (`ControlPersist`), so the 5-second refresh does not open a new SSH session each time.
+
+To limit a dedicated key on the home machine to the tracker, add it to `~/.ssh/authorized_keys` with a forced command:
+
+```
+command="/usr/bin/python3 -E -s -B /home/you/.config/omarchy/plugins/peter.time-tracker/bridge.py --serve",restrict ssh-ed25519 AAAA... laptop
+```
+
+Tailscale SSH does not read `authorized_keys`, so a forced command has no effect over it; restrict access with your tailnet's SSH rules instead.
+
+Delete `remote.json` to return to a local database.
+
 ## Data and privacy
 
 The SQLite database is stored at `$XDG_DATA_HOME/codex-time-tracker/tracker.sqlite3`, normally `~/.local/share/codex-time-tracker/tracker.sqlite3`. The historical folder name preserves compatibility with the original Codex companion; Codex is not required. `TIME_TRACKER_DB` overrides the database path, and the CLI also accepts `--db PATH` before the command.
