@@ -43,7 +43,11 @@ Panel {
 
     // ---------- bar presence: hidden while idle, peeking with the center hover ----------
     readonly property bool revealHeld: !!bar && bar.centerSectionRevealHeld === true && bar.centerHoverRevealSuppressed !== true
-    readonly property bool shown: tracking || revealHeld || opened || errorText !== ""
+    // "hiddenInBar": true in this widget's shell.json entry, for a bar that shows
+    // the timer elsewhere (e.g. an indicator calling the IPC below); the widget
+    // then only appears to anchor the open panel.
+    readonly property bool hiddenInBar: setting("hiddenInBar", false) === true
+    readonly property bool shown: opened || (!hiddenInBar && (tracking || revealHeld || errorText !== ""))
     // Only the elapsed time shows in the bar; the tooltip names the project.
     readonly property string barLabel: tracking && !vertical ? duration(elapsed) : ""
 
@@ -75,6 +79,7 @@ Panel {
         function toggle(): void { root.toggle() }
         function open(): void { root.open() }
         function close(): void { root.close() }
+        function stop(): void { if (root.tracking) root.request(["stop"]) }
         function status(): string { return JSON.stringify({state: root.trackerState, error: root.errorText, open: root.opened}) }
     }
 
@@ -151,32 +156,40 @@ Panel {
     Timer { interval: 1000; running: root.tracking; repeat: true; onTriggered: root.now = Date.now() }
 
     // ---------- bar button ----------
-    TextMetrics {
-        id: labelMetrics
-        font.family: bar ? bar.fontFamily : Style.font.family
-        font.pixelSize: button.fontSize
-        text: root.barLabel !== "" ? "󱎫  " + root.barLabel : ""
+    readonly property string tooltip: tracking
+        ? (running.company + (running.project ? " · " + running.project : "")
+           + "\n" + duration(elapsed) + (running.note ? "\n" + running.note : ""))
+        : (errorText !== "" ? errorText : "Not tracking")
+    readonly property Item button: barLabel !== "" ? timeButton : iconButton
+
+    function pressed(b) {
+        if (b === Qt.RightButton && tracking) request(["stop"])
+        else toggle()
     }
 
+    // Idle: the plain clock icon, sized like every other bar icon.
     BarIconButton {
-        id: button
+        id: iconButton
         anchors.fill: parent
+        visible: root.barLabel === ""
         bar: root.bar
-        // While tracking the icon rides at the front of the label, so it
-        // reads "icon  project  0:12:34" (the kit puts a label before its icon).
-        text: root.barLabel !== "" ? "" : "󱎫"
-        labelText: root.barLabel !== "" ? "󱎫  " + root.barLabel : ""
-        slotSize: root.barLabel !== "" ? labelMetrics.advanceWidth + Style.space(14) : Style.bar.iconSlot
+        text: "󱎫"
         dimmed: !root.tracking && root.errorText === ""
         active: root.errorText !== "" && !root.tracking
-        tooltipText: root.tracking
-            ? (root.running.company + (root.running.project ? " · " + root.running.project : "")
-               + "\n" + root.duration(root.elapsed) + (root.running.note ? "\n" + root.running.note : ""))
-            : (root.errorText !== "" ? root.errorText : "Not tracking")
-        onPressed: function(b) {
-            if (b === Qt.RightButton && root.tracking) root.request(["stop"])
-            else root.toggle()
-        }
+        tooltipText: root.tooltip
+        onPressed: function(b) { root.pressed(b) }
+    }
+
+    // Tracking: icon and elapsed time as one text button (as command widgets
+    // draw text), which pads itself like its neighbours.
+    WidgetButton {
+        id: timeButton
+        anchors.fill: parent
+        visible: root.barLabel !== ""
+        bar: root.bar
+        text: "󱎫  " + root.barLabel
+        tooltipText: root.tooltip
+        onPressed: function(b) { root.pressed(b) }
     }
 
     // ---------- panel ----------
