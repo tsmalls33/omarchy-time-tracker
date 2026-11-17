@@ -59,6 +59,10 @@ def connect(path):
             vault TEXT NOT NULL, payload TEXT NOT NULL, path TEXT, error TEXT);
     ''')
     db.execute("INSERT OR IGNORE INTO settings VALUES ('timezone', ?)", (local_timezone(),))
+    # Sessions copied in from Clockify remember their source id (clockify_sync.py).
+    if 'clockify_id' not in {row[1] for row in db.execute('PRAGMA table_info(sessions)')}:
+        db.execute('ALTER TABLE sessions ADD COLUMN clockify_id TEXT')
+    db.execute('CREATE UNIQUE INDEX IF NOT EXISTS sessions_clockify_id ON sessions(clockify_id) WHERE clockify_id IS NOT NULL')
     return db
 
 
@@ -227,7 +231,8 @@ def execute(db, args, now=None):
                     obsidian_vault=setting(db, 'obsidian_vault') or '',
                     obsidian_autolog=setting(db, 'obsidian_autolog') == 'on',
                     obsidian_pending=db.execute('SELECT count(*) FROM obsidian_jobs WHERE path IS NULL').fetchone()[0],
-                    timezone=setting(db, 'timezone'))
+                    timezone=setting(db, 'timezone'),
+                    clockify_synced_at=setting(db, 'clockify_synced_at'))
     if cmd == 'auto-obsidian':
         if args.mode == 'on':
             from obsidian_export import vault_directory
@@ -285,6 +290,9 @@ def execute(db, args, now=None):
         cid = company(db, args.company)['id'] if args.company else None
         rows = db.execute('SELECT * FROM sessions WHERE (? IS NULL OR company_id=?) ORDER BY start DESC LIMIT ?', (cid, cid, args.limit))
         return [session_detail(db, r, now) for r in rows]
+    if cmd == 'clockify-sync':
+        from clockify_sync import sync
+        return sync(db, setting, since=args.since, dry_run=args.dry_run)
     if cmd in ('delete-record', 'clear-records'):
         if not args.confirm:
             raise ValueError('Deletion requires --confirm. Exported PDFs and Obsidian notes will remain.')
@@ -355,6 +363,9 @@ def parser():
     sub.add_parser('timezone').add_argument('name')
     sub.add_parser('auto-obsidian').add_argument('mode', choices=['on', 'off'])
     sub.add_parser('retry-obsidian')
+    clockify = sub.add_parser('clockify-sync', help='Copy completed Clockify entries in (needs clockify-cli)')
+    clockify.add_argument('--since', help='Re-read from this date, YYYY-MM-DD (default: 7 days before the last sync)')
+    clockify.add_argument('--dry-run', action='store_true', help='Report what would change without saving')
     for cmd in ('delete-record', 'clear-records'):
         child = sub.add_parser(cmd)
         if cmd == 'delete-record':

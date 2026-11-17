@@ -235,6 +235,24 @@ PopupWindow {
                     visible: owner.errorText !== ""
                     text: owner.errorText; color: Color.urgent; wrapMode: Text.WordWrap; textFormat: Text.PlainText; Layout.fillWidth: true
                 }
+                // Clockify is only contacted here, when pressed (clockify_sync.py).
+                RowLayout {
+                    Layout.fillWidth: true
+                    Button {
+                        text: "Sync Clockify"
+                        enabled: !popup.busy
+                        onClicked: { owner.syncMessage = "Syncing with Clockify…"; owner.request(["clockify-sync"]) }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: owner.syncMessage !== "" ? owner.syncMessage
+                            : (owner.trackerState.clockify_synced_at ? "Last sync " + owner.trackerState.clockify_synced_at.replace("T", " ").slice(0, 16) + " UTC" : "Never synced")
+                        textFormat: Text.PlainText
+                        wrapMode: Text.WordWrap
+                        color: popup.fg
+                        opacity: 0.75
+                    }
+                }
                 Button {
                     text: popup.managingRecords ? "Hide record management" : "Manage records"
                     Layout.fillWidth: true

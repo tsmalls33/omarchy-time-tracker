@@ -12,6 +12,7 @@ Item {
     property var projects: []
     property var records: []
     property string recordMessage: ""
+    property string syncMessage: ""
     onCompaniesChanged: {
         if (popup.open && popup.companyName === "" && companies.length > 0)
             popup.companyName = trackerState.selected_company || companies[0].name
@@ -69,7 +70,11 @@ Item {
                 try {
                     var data = JSON.parse(text)
                     worker.received = true
-                    if (!data.ok) { root.errorText = data.error; return }
+                    if (!data.ok) {
+                        root.errorText = data.error
+                        if (worker.action === "clockify-sync") root.syncMessage = ""
+                        return
+                    }
                     if (worker.isAction) root.errorText = ""
                     if (data.result && data.result.warning) root.errorText = data.result.warning
                     root.trackerState = data.status
@@ -81,6 +86,11 @@ Item {
                         var deletedId = data.result.deleted_id
                         root.records = deletedId === null ? [] : root.records.filter(function(r) { return r.id !== deletedId })
                         root.recordMessage = data.result.deleted_records + " record(s) deleted."
+                    }
+                    if (worker.action === "clockify-sync" && data.result) {
+                        var r = data.result
+                        root.syncMessage = "Synced: " + r.added + " new, " + r.updated + " updated, " + r.removed + " removed"
+                            + (r.skipped_running ? " (running timer skipped)" : "")
                     }
                     if (data.result && data.result.pdf_path) root.pdfPath = data.result.pdf_path
                     if (data.result && data.result.obsidian_vault !== undefined) popup.setVault(data.result.obsidian_vault)
