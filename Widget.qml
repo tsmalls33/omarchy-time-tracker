@@ -23,7 +23,9 @@ Item {
     property real now: Date.now()
     readonly property bool vertical: bar ? bar.vertical : false
     readonly property real elapsed: trackerState.running ? Math.max(0, (now - Date.parse(trackerState.running.start)) / 1000) : 0
-    readonly property string bridge: decodeURIComponent(Qt.resolvedUrl("bridge.py").toString().replace(/^file:\/\//, ""))
+    // Omarchy's shell resolves plugin files to qs:/// URLs (file:// on older
+    // shells); both map straight onto the filesystem path.
+    readonly property string bridge: decodeURIComponent(Qt.resolvedUrl("bridge.py").toString().replace(/^(?:file|qs):\/\//, ""))
     implicitWidth: vertical ? (bar ? bar.barSize : 26) : Math.min(260, label.implicitWidth + 16)
     implicitHeight: bar ? bar.barSize : 26
 
