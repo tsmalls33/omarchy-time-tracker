@@ -355,7 +355,7 @@ Column {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(8)
             PlainLabel { text: form.showMore ? "󰅀" : "󰅂"; color: form.muted }
-            PanelSectionHeader { text: "Reports, Obsidian & records"; foreground: form.fg; fontFamily: form.font }
+            PanelSectionHeader { text: "Records, reports & Obsidian"; foreground: form.fg; fontFamily: form.font }
         }
         MouseArea {
             anchors.fill: parent
@@ -371,6 +371,152 @@ Column {
         visible: form.showMore
         width: parent.width
         spacing: Style.space(10)
+
+        // Records
+        PanelSectionHeader { text: "Records"; foreground: form.fg; fontFamily: form.font }
+        Dropdown {
+            id: recordPicker
+            width: parent.width
+            showLabel: false
+            options: form.recordOptions
+            value: form.recordValue
+            foreground: form.fg
+            fontFamily: form.font
+            onChanged: function(v) { form.recordValue = v }
+        }
+        Row {
+            spacing: Style.space(8)
+            Action {
+                text: "Edit"; iconText: "󰏫"
+                enabled: !form.owner.busy && form.recordValue !== ""
+                onClicked: {
+                    var r = form.completedRecords.find(function(x) { return String(x.id) === form.recordValue })
+                    if (!r) return
+                    form.deletionCommand = ""
+                    form.editId = r.id
+                    editStart.text = r.start.slice(0, 16).replace("T", " ")
+                    editEnd.text = r.end.slice(0, 16).replace("T", " ")
+                    editStart.forceActiveFocus()
+                }
+            }
+            Action {
+                text: "Delete"; iconText: "󰆴"
+                enabled: !form.owner.busy && form.recordValue !== ""
+                onClicked: {
+                    form.editId = 0
+                    form.deletionId = parseInt(form.recordValue, 10)
+                    var opt = form.recordOptions.find(function(o) { return o.value === form.recordValue })
+                    form.deletionLabel = opt ? opt.label : "#" + form.recordValue
+                    form.deletionCommand = "delete-record"
+                    deleteConfirmation.clear()
+                }
+            }
+            Action {
+                text: "Clear all"; iconText: "󰎟"
+                enabled: !form.owner.busy && !form.tracking && form.owner.records.length > 0
+                onClicked: { form.editId = 0; form.deletionCommand = "clear-records"; deleteConfirmation.clear() }
+            }
+            Action {
+                text: "Reload"; iconText: "󰑐"
+                enabled: !form.owner.busy
+                onClicked: { form.deletionCommand = ""; form.owner.request(["records", "--limit", "10000"]) }
+            }
+        }
+        // Edit: date + time of start and end. A time alone (1600, 4pm) keeps the day.
+        Column {
+            visible: form.editId !== 0
+            width: parent.width
+            spacing: Style.space(6)
+            Caption {
+                width: parent.width
+                text: "Start and end as 2026-11-18 16:00, or just 1600 / 4pm to keep the day."
+                      + (form.editLinked ? " Linked to Clockify: saving changes it there too (one request)." : "")
+            }
+            Row {
+                width: parent.width
+                spacing: Style.space(6)
+                TextField {
+                    id: editStart
+                    width: (parent.width - parent.spacing) / 2
+                    placeholderText: "Start"
+                    maximumLength: 32
+                    foreground: form.fg
+                    font.family: form.font
+                    onAccepted: saveEdit.clicked()
+                    Keys.onEscapePressed: form.editId = 0
+                }
+                TextField {
+                    id: editEnd
+                    width: (parent.width - parent.spacing) / 2
+                    placeholderText: "End"
+                    maximumLength: 32
+                    foreground: form.fg
+                    font.family: form.font
+                    onAccepted: saveEdit.clicked()
+                    Keys.onEscapePressed: form.editId = 0
+                }
+            }
+            Row {
+                spacing: Style.space(8)
+                Action {
+                    id: saveEdit
+                    text: "Save"; iconText: "󰄬"
+                    enabled: !form.owner.busy && editStart.text.trim() !== "" && editEnd.text.trim() !== ""
+                    onClicked: {
+                        if (!enabled) return
+                        form.owner.request(["edit-record", String(form.editId), "--start", editStart.text.trim(), "--end", editEnd.text.trim()])
+                        form.editId = 0
+                    }
+                }
+                Action {
+                    text: "Cancel"
+                    onClicked: form.editId = 0
+                }
+            }
+        }
+        Column {
+            visible: form.deletionCommand !== ""
+            width: parent.width
+            spacing: Style.space(6)
+            Caption {
+                width: parent.width
+                text: (form.deletionCommand === "clear-records" ? "Permanently delete ALL time records for every company?"
+                       : "Permanently delete " + form.deletionLabel + "?") + " Type DELETE to confirm. Exported PDFs and notes stay."
+            }
+            Row {
+                width: parent.width
+                spacing: Style.space(6)
+                TextField {
+                    id: deleteConfirmation
+                    width: parent.width - confirmDelete.width - cancelDelete.width - 2 * parent.spacing
+                    placeholderText: "DELETE"
+                    foreground: form.fg
+                    font.family: form.font
+                }
+                Action {
+                    id: confirmDelete
+                    text: "Delete"
+                    enabled: !form.owner.busy && deleteConfirmation.text === "DELETE"
+                    onClicked: {
+                        var args = [form.deletionCommand]
+                        if (form.deletionCommand === "delete-record") args.push(String(form.deletionId))
+                        args.push("--confirm")
+                        form.owner.request(args)
+                        form.deletionCommand = ""
+                        form.recordValue = ""
+                        deleteConfirmation.clear()
+                    }
+                }
+                Action {
+                    id: cancelDelete
+                    text: "Cancel"
+                    onClicked: { form.deletionCommand = ""; deleteConfirmation.clear() }
+                }
+            }
+        }
+        Caption { visible: text !== ""; width: parent.width; text: form.owner.recordMessage }
+
+        PanelSeparator { width: parent.width; foreground: form.fg }
 
         // Reports
         PanelSectionHeader { text: "Report"; foreground: form.fg; fontFamily: form.font }
@@ -522,151 +668,6 @@ Column {
             }
         }
 
-        PanelSeparator { width: parent.width; foreground: form.fg }
-
-        // Records
-        PanelSectionHeader { text: "Records"; foreground: form.fg; fontFamily: form.font }
-        Dropdown {
-            id: recordPicker
-            width: parent.width
-            showLabel: false
-            options: form.recordOptions
-            value: form.recordValue
-            foreground: form.fg
-            fontFamily: form.font
-            onChanged: function(v) { form.recordValue = v }
-        }
-        Row {
-            spacing: Style.space(8)
-            Action {
-                text: "Edit"; iconText: "󰏫"
-                enabled: !form.owner.busy && form.recordValue !== ""
-                onClicked: {
-                    var r = form.completedRecords.find(function(x) { return String(x.id) === form.recordValue })
-                    if (!r) return
-                    form.deletionCommand = ""
-                    form.editId = r.id
-                    editStart.text = r.start.slice(0, 16).replace("T", " ")
-                    editEnd.text = r.end.slice(0, 16).replace("T", " ")
-                    editStart.forceActiveFocus()
-                }
-            }
-            Action {
-                text: "Delete"; iconText: "󰆴"
-                enabled: !form.owner.busy && form.recordValue !== ""
-                onClicked: {
-                    form.editId = 0
-                    form.deletionId = parseInt(form.recordValue, 10)
-                    var opt = form.recordOptions.find(function(o) { return o.value === form.recordValue })
-                    form.deletionLabel = opt ? opt.label : "#" + form.recordValue
-                    form.deletionCommand = "delete-record"
-                    deleteConfirmation.clear()
-                }
-            }
-            Action {
-                text: "Clear all"; iconText: "󰎟"
-                enabled: !form.owner.busy && !form.tracking && form.owner.records.length > 0
-                onClicked: { form.editId = 0; form.deletionCommand = "clear-records"; deleteConfirmation.clear() }
-            }
-            Action {
-                text: "Reload"; iconText: "󰑐"
-                enabled: !form.owner.busy
-                onClicked: { form.deletionCommand = ""; form.owner.request(["records", "--limit", "10000"]) }
-            }
-        }
-        // Edit: date + time of start and end. A time alone (1600, 4pm) keeps the day.
-        Column {
-            visible: form.editId !== 0
-            width: parent.width
-            spacing: Style.space(6)
-            Caption {
-                width: parent.width
-                text: "Start and end as 2026-11-18 16:00, or just 1600 / 4pm to keep the day."
-                      + (form.editLinked ? " Linked to Clockify: saving changes it there too (one request)." : "")
-            }
-            Row {
-                width: parent.width
-                spacing: Style.space(6)
-                TextField {
-                    id: editStart
-                    width: (parent.width - parent.spacing) / 2
-                    placeholderText: "Start"
-                    maximumLength: 32
-                    foreground: form.fg
-                    font.family: form.font
-                    onAccepted: saveEdit.clicked()
-                    Keys.onEscapePressed: form.editId = 0
-                }
-                TextField {
-                    id: editEnd
-                    width: (parent.width - parent.spacing) / 2
-                    placeholderText: "End"
-                    maximumLength: 32
-                    foreground: form.fg
-                    font.family: form.font
-                    onAccepted: saveEdit.clicked()
-                    Keys.onEscapePressed: form.editId = 0
-                }
-            }
-            Row {
-                spacing: Style.space(8)
-                Action {
-                    id: saveEdit
-                    text: "Save"; iconText: "󰄬"
-                    enabled: !form.owner.busy && editStart.text.trim() !== "" && editEnd.text.trim() !== ""
-                    onClicked: {
-                        if (!enabled) return
-                        form.owner.request(["edit-record", String(form.editId), "--start", editStart.text.trim(), "--end", editEnd.text.trim()])
-                        form.editId = 0
-                    }
-                }
-                Action {
-                    text: "Cancel"
-                    onClicked: form.editId = 0
-                }
-            }
-        }
-        Column {
-            visible: form.deletionCommand !== ""
-            width: parent.width
-            spacing: Style.space(6)
-            Caption {
-                width: parent.width
-                text: (form.deletionCommand === "clear-records" ? "Permanently delete ALL time records for every company?"
-                       : "Permanently delete " + form.deletionLabel + "?") + " Type DELETE to confirm. Exported PDFs and notes stay."
-            }
-            Row {
-                width: parent.width
-                spacing: Style.space(6)
-                TextField {
-                    id: deleteConfirmation
-                    width: parent.width - confirmDelete.width - cancelDelete.width - 2 * parent.spacing
-                    placeholderText: "DELETE"
-                    foreground: form.fg
-                    font.family: form.font
-                }
-                Action {
-                    id: confirmDelete
-                    text: "Delete"
-                    enabled: !form.owner.busy && deleteConfirmation.text === "DELETE"
-                    onClicked: {
-                        var args = [form.deletionCommand]
-                        if (form.deletionCommand === "delete-record") args.push(String(form.deletionId))
-                        args.push("--confirm")
-                        form.owner.request(args)
-                        form.deletionCommand = ""
-                        form.recordValue = ""
-                        deleteConfirmation.clear()
-                    }
-                }
-                Action {
-                    id: cancelDelete
-                    text: "Cancel"
-                    onClicked: { form.deletionCommand = ""; deleteConfirmation.clear() }
-                }
-            }
-        }
-        Caption { visible: text !== ""; width: parent.width; text: form.owner.recordMessage }
         Caption { width: parent.width; text: "Timezone " + (form.owner.trackerState.timezone || "…") }
     }
 }
