@@ -27,10 +27,11 @@ Column {
     property int deletionId: 0
     property string deletionLabel: ""
     property string recordValue: ""
+    property int editId: 0          // record being edited, 0 = none
 
     // Keys go to whatever is being typed in or picked, not the panel.
     readonly property bool editing: noteField.activeFocus || startAtField.activeFocus || newCompanyField.activeFocus || newProjectField.activeFocus
-        || reportDate.activeFocus || vaultPath.activeFocus || pushSince.activeFocus || deleteConfirmation.activeFocus
+        || reportDate.activeFocus || vaultPath.activeFocus || pushSince.activeFocus || deleteConfirmation.activeFocus || editStart.activeFocus || editEnd.activeFocus
         || companyPicker.popupOpen || projectPicker.popupOpen || period.popupOpen || scope.popupOpen || recordPicker.popupOpen
 
     readonly property var companyOptions: owner.companies.map(function(c) { return { value: c.name, label: c.name } })
@@ -39,6 +40,10 @@ Column {
         return [{ value: "", label: form.noProject }].concat(owner.projects.filter(function(p) {
             return company && p.company_id === company.id
         }).map(function(p) { return { value: p.name, label: p.name } }))
+    }
+    readonly property bool editLinked: {
+        var r = owner.records.find(function(x) { return x.id === form.editId })
+        return !!(r && r.clockify_id)
     }
     readonly property var completedRecords: owner.records.filter(function(r) { return r.end !== null })
     readonly property var recordOptions: completedRecords.map(function(r) {
@@ -534,9 +539,23 @@ Column {
         Row {
             spacing: Style.space(8)
             Action {
+                text: "Edit"; iconText: "󰏫"
+                enabled: !form.owner.busy && form.recordValue !== ""
+                onClicked: {
+                    var r = form.completedRecords.find(function(x) { return String(x.id) === form.recordValue })
+                    if (!r) return
+                    form.deletionCommand = ""
+                    form.editId = r.id
+                    editStart.text = r.start.slice(0, 16).replace("T", " ")
+                    editEnd.text = r.end.slice(0, 16).replace("T", " ")
+                    editStart.forceActiveFocus()
+                }
+            }
+            Action {
                 text: "Delete"; iconText: "󰆴"
                 enabled: !form.owner.busy && form.recordValue !== ""
                 onClicked: {
+                    form.editId = 0
                     form.deletionId = parseInt(form.recordValue, 10)
                     var opt = form.recordOptions.find(function(o) { return o.value === form.recordValue })
                     form.deletionLabel = opt ? opt.label : "#" + form.recordValue
@@ -547,12 +566,64 @@ Column {
             Action {
                 text: "Clear all"; iconText: "󰎟"
                 enabled: !form.owner.busy && !form.tracking && form.owner.records.length > 0
-                onClicked: { form.deletionCommand = "clear-records"; deleteConfirmation.clear() }
+                onClicked: { form.editId = 0; form.deletionCommand = "clear-records"; deleteConfirmation.clear() }
             }
             Action {
                 text: "Reload"; iconText: "󰑐"
                 enabled: !form.owner.busy
                 onClicked: { form.deletionCommand = ""; form.owner.request(["records", "--limit", "10000"]) }
+            }
+        }
+        // Edit: date + time of start and end. A time alone (1600, 4pm) keeps the day.
+        Column {
+            visible: form.editId !== 0
+            width: parent.width
+            spacing: Style.space(6)
+            Caption {
+                width: parent.width
+                text: "Start and end as 2026-11-18 16:00, or just 1600 / 4pm to keep the day."
+                      + (form.editLinked ? " Linked to Clockify: saving changes it there too (one request)." : "")
+            }
+            Row {
+                width: parent.width
+                spacing: Style.space(6)
+                TextField {
+                    id: editStart
+                    width: (parent.width - parent.spacing) / 2
+                    placeholderText: "Start"
+                    maximumLength: 32
+                    foreground: form.fg
+                    font.family: form.font
+                    onAccepted: saveEdit.clicked()
+                    Keys.onEscapePressed: form.editId = 0
+                }
+                TextField {
+                    id: editEnd
+                    width: (parent.width - parent.spacing) / 2
+                    placeholderText: "End"
+                    maximumLength: 32
+                    foreground: form.fg
+                    font.family: form.font
+                    onAccepted: saveEdit.clicked()
+                    Keys.onEscapePressed: form.editId = 0
+                }
+            }
+            Row {
+                spacing: Style.space(8)
+                Action {
+                    id: saveEdit
+                    text: "Save"; iconText: "󰄬"
+                    enabled: !form.owner.busy && editStart.text.trim() !== "" && editEnd.text.trim() !== ""
+                    onClicked: {
+                        if (!enabled) return
+                        form.owner.request(["edit-record", String(form.editId), "--start", editStart.text.trim(), "--end", editEnd.text.trim()])
+                        form.editId = 0
+                    }
+                }
+                Action {
+                    text: "Cancel"
+                    onClicked: form.editId = 0
+                }
             }
         }
         Column {

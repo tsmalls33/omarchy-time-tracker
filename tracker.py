@@ -170,10 +170,8 @@ START_AT_RE = re.compile(r'^(?:(\d{1,2}):(\d{2})|(\d{3,4})|(\d{1,2}))\s*(am|pm)?
 START_AT_HELP = 'Start time must look like 1600, 16:00, 0900 or 4pm.'
 
 
-def parse_start_at(value, now, tz):
-    """Epoch for a wall-clock time today: "1600", "16:00", "0900", "4pm", "9:30am".
-
-    Values must fall between 0000 and 2359. A time later than now is refused."""
+def parse_clock(value):
+    """(hour, minute) from "1600", "16:00", "0900", "4pm" or "9:30am"; 0000-2359 only."""
     m = START_AT_RE.match((value or '').strip().lower().replace('.', ''))
     if not m:
         raise ValueError(START_AT_HELP)
@@ -192,10 +190,32 @@ def parse_start_at(value, now, tz):
         hour = hour % 12 + (12 if meridiem == 'pm' else 0)
     if hour > 23 or minute > 59:
         raise ValueError('Start time must be between 0000 and 2359.')
-    start = datetime.combine(datetime.fromtimestamp(now, tz).date(), time(hour, minute), tz).timestamp()
+    return hour, minute
+
+
+def parse_start_at(value, now, tz):
+    """Epoch for a wall-clock time today. A time later than now is refused."""
+    start = datetime.combine(datetime.fromtimestamp(now, tz).date(), time(*parse_clock(value)), tz).timestamp()
     if start > now:
         raise ValueError('Start time is later than now.')
     return start
+
+
+def parse_when(value, day, tz, label):
+    """Epoch for "YYYY-MM-DD HH:MM" (any clock form above), or a clock alone on `day`."""
+    text = (value or '').strip()
+    parts = text.split(None, 1)
+    if parts and re.match(r'^\d{4}-\d{2}-\d{2}$', parts[0]):
+        try:
+            day = date.fromisoformat(parts[0])
+        except ValueError:
+            raise ValueError(f'{label}: {parts[0]} is not a real date.')
+        text = parts[1] if len(parts) > 1 else ''
+    try:
+        clock = parse_clock(text)
+    except ValueError:
+        raise ValueError(f'{label} must look like 2026-11-18 16:00, or just 1600 / 4pm for the same day.')
+    return datetime.combine(day, time(*clock), tz).timestamp()
 
 
 def validate_text(value, label, limit, blank=False):
@@ -343,6 +363,34 @@ def execute(db, args, now=None):
         day = date.fromisoformat(args.date).isoformat()
         setting(db, 'clockify_push_since', day)
         return dict(clockify_push_since=day)
+    if cmd == 'edit-record':
+        row = db.execute('SELECT * FROM sessions WHERE id=?', (args.id,)).fetchone()
+        if row is None:
+            raise ValueError('Record not found.')
+        if row['end'] is None:
+            raise ValueError('Stop the running timer before editing its record.')
+        tz = ZoneInfo(setting(db, 'timezone'))
+        start = parse_when(args.start, datetime.fromtimestamp(row['start'], tz).date(), tz, 'Start') if args.start else row['start']
+        end = parse_when(args.end, datetime.fromtimestamp(start, tz).date(), tz, 'End') if args.end else row['end']
+        if end <= start:
+            raise ValueError('End must be after start.')
+        if end > now:
+            raise ValueError('End is later than now.')
+        clash = db.execute('SELECT start, end FROM sessions WHERE id<>? AND start < ? AND COALESCE(end, ?) > ? ORDER BY start LIMIT 1',
+                           (args.id, end, now, start)).fetchone()
+        if clash:
+            fmt = lambda e: datetime.fromtimestamp(e, tz).strftime('%Y-%m-%d %H:%M') if e is not None else 'now'
+            raise ValueError(f"Overlaps another session ({fmt(clash['start'])} to {fmt(clash['end'])}).")
+        clockify = False
+        if row['clockify_id']:
+            # Linked to Clockify: change it there too (one request), or the next
+            # sync would put Clockify's old times back.
+            from clockify_sync import edit_entry
+            edit_entry(row['clockify_id'], start, end)
+            clockify = True
+        db.execute('UPDATE sessions SET start=?, end=? WHERE id=?', (start, end, args.id))
+        detail = session_detail(db, db.execute('SELECT * FROM sessions WHERE id=?', (args.id,)).fetchone(), now)
+        return dict(edited=detail, clockify_updated=clockify)
     if cmd in ('delete-record', 'clear-records'):
         if not args.confirm:
             raise ValueError('Deletion requires --confirm. Exported PDFs and Obsidian notes will remain.')
@@ -419,6 +467,10 @@ def parser():
     clockify.add_argument('--dry-run', action='store_true', help='Report what would change without saving (no push)')
     clockify.add_argument('--no-push', action='store_true', help='Only pull from Clockify; send nothing')
     sub.add_parser('clockify-push-since', help='Send sessions from this date on to Clockify').add_argument('date', help='YYYY-MM-DD')
+    edit = sub.add_parser('edit-record', help='Change when a finished session started and ended')
+    edit.add_argument('id', type=int)
+    edit.add_argument('--start', help='"YYYY-MM-DD HH:MM", or a time alone (1600, 4pm) for the same day')
+    edit.add_argument('--end', help='As --start; a time alone means the (new) start day')
     for cmd in ('delete-record', 'clear-records'):
         child = sub.add_parser(cmd)
         if cmd == 'delete-record':

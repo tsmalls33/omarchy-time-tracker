@@ -115,6 +115,14 @@ Panel {
                     root.projects = data.projects
                     root.now = Date.now()
                     if (worker.action === "records") root.records = data.result
+                    if (data.result && data.result.edited) {
+                        var e = data.result.edited
+                        root.records = root.records.map(function(r) { return r.id === e.id ? e : r })
+                            .sort(function(x, y) { return y.start < x.start ? -1 : 1 })
+                        root.recordMessage = "Record saved: " + e.start.slice(0, 16).replace("T", " ") + " to "
+                            + e.end.slice(11, 16) + " (" + root.duration(e.seconds) + ")"
+                            + (data.result.clockify_updated ? " · Clockify updated" : "")
+                    }
                     if (data.result && data.result.deleted_records !== undefined) {
                         var deletedId = data.result.deleted_id
                         root.records = deletedId === null ? [] : root.records.filter(function(r) { return r.id !== deletedId })

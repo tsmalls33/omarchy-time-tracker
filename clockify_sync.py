@@ -230,6 +230,13 @@ def clockify_time(epoch):
     return datetime.fromtimestamp(epoch).strftime('%Y-%m-%d %H:%M:%S')
 
 
+def edit_entry(entry_id, start, end, run=None):
+    """Move one Clockify entry to new local start/end times (one request)."""
+    if not ID_RE.match(entry_id or ''):
+        raise ValueError('Record has an invalid Clockify id.')
+    (run or run_cli)('edit', entry_id, '--when=' + clockify_time(start), '--when-to-close=' + clockify_time(end), quiet_id=True)
+
+
 def push(db, setting, run=run_cli, today=None, limit=PUSH_LIMIT):
     """Send finished local sessions (from clockify_push_since on) to Clockify.
 

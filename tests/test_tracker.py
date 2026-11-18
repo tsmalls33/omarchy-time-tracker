@@ -100,5 +100,47 @@ class TrackerTests(unittest.TestCase):
             self.run_cmd('start', '--at', '1700', now=now + 120)
         self.assertEqual(self.run_cmd('start', now=now + 120)['seconds'], 0)
 
+    def test_edit_record(self):
+        tz = t.ZoneInfo('America/Curacao')
+        at = lambda d, h, m: datetime(2026, 11, d, h, m, tzinfo=tz).timestamp()
+        now = at(18, 20, 0)
+        first = self.run_cmd('start', '--at', '0900', now=at(18, 12, 0))['id']
+        self.run_cmd('stop', now=at(18, 10, 0))
+        second = self.run_cmd('start', '--at', '1300', now=at(18, 14, 0))['id']
+        self.run_cmd('stop', now=at(18, 15, 0))
+        edited = self.run_cmd('edit-record', str(first), '--start', '0830', '--end', '11am', now=now)['edited']
+        self.assertEqual(edited['seconds'], 9000)
+        self.assertEqual(edited['start'][:16], '2026-11-18T08:30')
+        moved = self.run_cmd('edit-record', str(first), '--start', '2026-11-17 22:00', '--end', '2026-11-17 23:30', now=now)
+        self.assertEqual(moved['edited']['start'][:10], '2026-11-17')
+        self.assertFalse(moved['clockify_updated'])
+        for bad in (['--start', '2026-11-18 12:00', '--end', '1400'],  # overlaps the 13:00 session
+                    ['--start', '2026-11-17 23:45'],           # after its end
+                    ['--end', '2026-11-19 09:00'],             # in the future
+                    ['--start', '2026-02-30 09:00'],           # not a date
+                    ['--start', 'soon']):
+            with self.assertRaises(ValueError, msg=bad):
+                self.run_cmd('edit-record', str(first), *bad, now=now)
+        with self.assertRaises(ValueError):
+            self.run_cmd('edit-record', '999', '--start', '0900', now=now)
+
+    def test_edit_record_updates_linked_clockify_entry(self):
+        import clockify_sync
+        tz = t.ZoneInfo('America/Curacao')
+        at = lambda h, m: datetime(2026, 11, 18, h, m, tzinfo=tz).timestamp()
+        rid = self.run_cmd('start', '--at', '0900', now=at(10, 0))['id']
+        self.run_cmd('stop', now=at(10, 0))
+        self.db.execute("UPDATE sessions SET clockify_id='6afca1051841a5734b5d6b90' WHERE id=?", (rid,))
+        calls = []
+        original = clockify_sync.run_cli
+        clockify_sync.run_cli = lambda *argv, quiet_id=False: calls.append(argv) or '6afca1051841a5734b5d6b90'
+        try:
+            result = self.run_cmd('edit-record', str(rid), '--end', '1030', now=at(12, 0))
+        finally:
+            clockify_sync.run_cli = original
+        self.assertTrue(result['clockify_updated'])
+        self.assertEqual(calls[0][:2], ('edit', '6afca1051841a5734b5d6b90'))
+        self.assertTrue(calls[0][3].startswith('--when-to-close='))
+
 if __name__ == '__main__':
     unittest.main()

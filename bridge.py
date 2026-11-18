@@ -21,10 +21,10 @@ import tracker
 MAX_REQUEST = 16384
 MAX_RESPONSE = 4 * 1024 * 1024
 LOCAL_COMMANDS = {'add-company', 'companies', 'add-project', 'projects', 'select', 'start', 'stop', 'status', 'report',
-                  'records', 'timezone', 'vault', 'auto-obsidian', 'retry-obsidian', 'delete-record', 'clear-records', 'clockify-sync', 'clockify-push-since'}
+                  'records', 'timezone', 'vault', 'auto-obsidian', 'retry-obsidian', 'edit-record', 'delete-record', 'clear-records', 'clockify-sync', 'clockify-push-since'}
 # Over SSH: no settings or vault changes, and no files written on the home machine.
 REMOTE_COMMANDS = {'add-company', 'companies', 'add-project', 'projects', 'select', 'start', 'stop', 'status', 'report',
-                   'records', 'delete-record', 'clear-records', 'clockify-sync', 'clockify-push-since'}
+                   'records', 'edit-record', 'delete-record', 'clear-records', 'clockify-sync', 'clockify-push-since'}
 REMOTE_FORBIDDEN_FLAGS = {'--pdf', '--obsidian', '--output'}
 TARGET_RE = re.compile(r'^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9.-]*$')
 REMOTE_BRIDGE_RE = re.compile(r'^[A-Za-z0-9._/~-]+/bridge\.py$')
