@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import sys
@@ -165,6 +166,38 @@ def report(db, args, now):
                           for (c, p), s in sorted(totals.items(), key=lambda x: (x[0][0], x[0][1] or ''))], daily=rows)
 
 
+START_AT_RE = re.compile(r'^(?:(\d{1,2}):(\d{2})|(\d{3,4})|(\d{1,2}))\s*(am|pm)?$')
+START_AT_HELP = 'Start time must look like 1600, 16:00, 0900 or 4pm.'
+
+
+def parse_start_at(value, now, tz):
+    """Epoch for a wall-clock time today: "1600", "16:00", "0900", "4pm", "9:30am".
+
+    Values must fall between 0000 and 2359. A time later than now is refused."""
+    m = START_AT_RE.match((value or '').strip().lower().replace('.', ''))
+    if not m:
+        raise ValueError(START_AT_HELP)
+    colon_h, colon_m, digits, bare_h, meridiem = m.groups()
+    if colon_h is not None:
+        hour, minute = int(colon_h), int(colon_m)
+    elif digits is not None:
+        hour, minute = int(digits[:-2]), int(digits[-2:])
+    elif meridiem:            # "4pm"
+        hour, minute = int(bare_h), 0
+    else:                     # "16" alone is ambiguous
+        raise ValueError(START_AT_HELP)
+    if meridiem:
+        if not 1 <= hour <= 12:
+            raise ValueError('With am/pm the hour must be 1-12.')
+        hour = hour % 12 + (12 if meridiem == 'pm' else 0)
+    if hour > 23 or minute > 59:
+        raise ValueError('Start time must be between 0000 and 2359.')
+    start = datetime.combine(datetime.fromtimestamp(now, tz).date(), time(hour, minute), tz).timestamp()
+    if start > now:
+        raise ValueError('Start time is later than now.')
+    return start
+
+
 def validate_text(value, label, limit, blank=False):
     if not isinstance(value, str) or len(value) > limit:
         raise ValueError(f'{label} must be at most {limit} characters.')
@@ -206,7 +239,14 @@ def execute(db, args, now=None):
         pid = project(db, c['id'], args.project)
         if not args.company and not args.project and not args.no_project:
             pid = setting(db, 'project') or None
-        cursor = db.execute('INSERT INTO sessions(company_id,project_id,start,note) VALUES (?,?,?,?)', (c['id'], pid, now, args.note))
+        start = now
+        if args.at:
+            start = parse_start_at(args.at, now, ZoneInfo(setting(db, 'timezone')))
+            last = db.execute('SELECT MAX(end) FROM sessions').fetchone()[0]
+            if last is not None and start < last:
+                ended = datetime.fromtimestamp(last, ZoneInfo(setting(db, 'timezone'))).strftime('%H:%M')
+                raise ValueError(f'Start time overlaps the previous session, which ended at {ended}.')
+        cursor = db.execute('INSERT INTO sessions(company_id,project_id,start,note) VALUES (?,?,?,?)', (c['id'], pid, start, args.note))
         return session_detail(db, db.execute('SELECT * FROM sessions WHERE id=?', (cursor.lastrowid,)).fetchone(), now)
     if cmd == 'stop':
         row = active(db)
@@ -359,6 +399,7 @@ def parser():
             child._option_string_actions['--company'].required = True
         if cmd == 'start':
             child.add_argument('--note', default='')
+            child.add_argument('--at', help='Start time today instead of now: 1600, 16:00, 0900, 4pm')
         if cmd == 'records':
             child.add_argument('--limit', type=int, default=100)
         if cmd == 'report':

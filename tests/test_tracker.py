@@ -83,5 +83,22 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(t.period_bounds('monthly', t.date(2026, 12, 7))[1], t.date(2027, 1, 1))
 
 
+    def test_start_at_custom_time(self):
+        tz = t.ZoneInfo('America/Curacao')
+        now = datetime(2026, 11, 18, 17, 30, tzinfo=tz).timestamp()
+        at = lambda h, m: datetime(2026, 11, 18, h, m, tzinfo=tz).timestamp()
+        for text, (h, m) in {'1600': (16, 0), '16:00': (16, 0), '0900': (9, 0), '900': (9, 0), '4pm': (16, 0),
+                             '9am': (9, 0), '9:30am': (9, 30), '12am': (0, 0), '12pm': (12, 0), '0000': (0, 0), ' 4 PM ': (16, 0)}.items():
+            self.assertEqual(t.parse_start_at(text, now, tz), at(h, m), text)
+        for bad in ('2400', '1260', '16', '13pm', '0am', 'abc', '', '16000', '1800'):
+            with self.assertRaises(ValueError, msg=bad):
+                t.parse_start_at(bad, now, tz)
+        started = self.run_cmd('start', '--at', '1600', now=now)
+        self.assertEqual(started['seconds'], 5400)
+        self.run_cmd('stop', now=now + 60)
+        with self.assertRaises(ValueError):   # overlaps the session just stopped
+            self.run_cmd('start', '--at', '1700', now=now + 120)
+        self.assertEqual(self.run_cmd('start', now=now + 120)['seconds'], 0)
+
 if __name__ == '__main__':
     unittest.main()

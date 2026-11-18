@@ -29,7 +29,7 @@ Column {
     property string recordValue: ""
 
     // Keys go to whatever is being typed in or picked, not the panel.
-    readonly property bool editing: noteField.activeFocus || newCompanyField.activeFocus || newProjectField.activeFocus
+    readonly property bool editing: noteField.activeFocus || startAtField.activeFocus || newCompanyField.activeFocus || newProjectField.activeFocus
         || reportDate.activeFocus || vaultPath.activeFocus || pushSince.activeFocus || deleteConfirmation.activeFocus
         || companyPicker.popupOpen || projectPicker.popupOpen || period.popupOpen || scope.popupOpen || recordPicker.popupOpen
 
@@ -68,8 +68,10 @@ Column {
         var args = ["start", "--company", companyName]
         if (projectName) args.push("--project", projectName)
         if (noteField.text.trim()) args.push("--note", noteField.text.trim())
+        if (startAtField.text.trim()) args.push("--at", startAtField.text.trim())
         owner.request(args)
         noteField.clear()
+        startAtField.clear()
     }
     function report(format) {
         var args = ["report", period.value]
@@ -289,6 +291,19 @@ Column {
             text: "Start"; iconText: "󰐊"
             enabled: !form.owner.busy && form.companyName !== ""
             onClicked: form.start()
+        }
+        // Empty = now. Otherwise today at 1600 / 16:00 / 0900 / 4pm (checked by tracker.py).
+        TextField {
+            id: startAtField
+            visible: !form.tracking
+            width: Style.space(96)
+            anchors.verticalCenter: parent.verticalCenter
+            placeholderText: "at: now"
+            maximumLength: 8
+            foreground: form.fg
+            font.family: form.font
+            onAccepted: form.start()
+            Keys.onEscapePressed: form.owner.close()
         }
         Action {
             visible: form.tracking
