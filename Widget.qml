@@ -48,10 +48,13 @@ Panel {
     // then only appears to anchor the open panel.
     readonly property bool hiddenInBar: setting("hiddenInBar", false) === true
     readonly property bool shown: opened || (!hiddenInBar && (tracking || revealHeld || errorText !== ""))
+    // With hiddenInBar the widget is never drawn: while the panel is open it
+    // stays as a zero-width anchor, so the indicator's timer isn't doubled.
+    readonly property bool drawn: shown && !hiddenInBar
     // Only the elapsed time shows in the bar; the tooltip names the project.
     readonly property string barLabel: tracking && !vertical ? duration(elapsed) : ""
 
-    implicitWidth: shown ? button.implicitWidth : 0
+    implicitWidth: drawn ? button.implicitWidth : 0
     implicitHeight: shown ? (vertical ? button.implicitHeight : barSize) : 0
     visible: shown
 
@@ -180,6 +183,8 @@ Panel {
         id: iconButton
         anchors.fill: parent
         visible: root.barLabel === ""
+        opacity: root.hiddenInBar ? 0 : 1
+        enabled: !root.hiddenInBar
         bar: root.bar
         text: "󱎫"
         dimmed: !root.tracking && root.errorText === ""
@@ -194,6 +199,8 @@ Panel {
         id: timeButton
         anchors.fill: parent
         visible: root.barLabel !== ""
+        opacity: root.hiddenInBar ? 0 : 1
+        enabled: !root.hiddenInBar
         bar: root.bar
         text: "󱎫  " + root.barLabel
         tooltipText: root.tooltip
