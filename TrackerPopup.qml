@@ -28,11 +28,13 @@ Column {
     property string deletionLabel: ""
     property string recordValue: ""
     property int editId: 0          // record being edited, 0 = none
+    readonly property Item foldHeader: moreHeader
 
     // Keys go to whatever is being typed in or picked, not the panel.
     readonly property bool editing: noteField.activeFocus || startAtField.activeFocus || newCompanyField.activeFocus || newProjectField.activeFocus
         || reportDate.activeFocus || vaultPath.activeFocus || pushSince.activeFocus || deleteConfirmation.activeFocus || editStart.activeFocus || editEnd.activeFocus
-        || companyPicker.popupOpen || projectPicker.popupOpen || period.popupOpen || scope.popupOpen || recordPicker.popupOpen
+        || pickerOpen
+    readonly property bool pickerOpen: companyPicker.popupOpen || projectPicker.popupOpen || period.popupOpen || scope.popupOpen || recordPicker.popupOpen
 
     readonly property var companyOptions: owner.companies.map(function(c) { return { value: c.name, label: c.name } })
     readonly property var projectOptions: {
@@ -108,8 +110,43 @@ Column {
         wrapMode: Text.WordWrap
         elide: Text.ElideNone
     }
+    // A picker is one tab stop: Enter or Space opens its list; arrows pass
+    // on to the panel instead of opening it. Its own trigger stops taking
+    // Tab, and this ring shows when the picker holds focus.
+    function pickerKey(picker, event) {
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+            picker.open()
+            event.accepted = true
+        }
+    }
+    component PickerRing: Rectangle {
+        property Item trigger: null
+        Component.onCompleted: {
+            function find(it) {
+                for (var i = 0; i < it.children.length; i++) {
+                    var c = it.children[i]
+                    if (c.activeFocusOnTab) return c
+                    var d = find(c)
+                    if (d) return d
+                }
+                return null
+            }
+            trigger = find(parent)
+            if (trigger) trigger.activeFocusOnTab = false
+        }
+        visible: parent.activeFocus
+        width: parent.width
+        height: trigger ? trigger.height : parent.height
+        y: parent.height - height
+        z: 10
+        color: "transparent"
+        radius: Style.cornerRadius
+        border.width: 2
+        border.color: Commons.Color.accent
+    }
     component Action: Button {
         bordered: true
+        focusable: true
         foreground: form.fg
         fontFamily: form.font
         opacity: enabled ? 1 : 0.4   // the kit barely marks a disabled button
@@ -171,6 +208,9 @@ Column {
             spacing: Style.space(6)
             SearchableDropdown {
                 id: companyPicker
+                activeFocusOnTab: true
+                Keys.onPressed: function(event) { form.pickerKey(companyPicker, event) }
+                PickerRing {}
                 width: parent.width - addCompanyButton.width - parent.spacing
                 label: "Company"
                 options: form.companyOptions
@@ -186,6 +226,7 @@ Column {
                 anchors.bottom: companyPicker.bottom
                 iconText: form.addingCompany ? "󰅖" : "󰐕"
                 tooltipText: "New company"
+                focusable: true
                 foreground: form.fg
                 fontFamily: form.font
                 onClicked: { form.addingCompany = !form.addingCompany; if (form.addingCompany) newCompanyField.forceActiveFocus() }
@@ -226,6 +267,9 @@ Column {
             spacing: Style.space(6)
             SearchableDropdown {
                 id: projectPicker
+                activeFocusOnTab: true
+                Keys.onPressed: function(event) { form.pickerKey(projectPicker, event) }
+                PickerRing {}
                 width: parent.width - addProjectButton.width - parent.spacing
                 label: "Project"
                 options: form.projectOptions
@@ -242,6 +286,7 @@ Column {
                 enabled: form.companyName !== ""
                 iconText: form.addingProject ? "󰅖" : "󰐕"
                 tooltipText: "New project"
+                focusable: true
                 foreground: form.fg
                 fontFamily: form.font
                 onClicked: { form.addingProject = !form.addingProject; if (form.addingProject) newProjectField.forceActiveFocus() }
@@ -346,13 +391,27 @@ Column {
     PanelSeparator { width: parent.width; foreground: form.fg }
 
     // ---------- folded: reports, Obsidian, records ----------
-    Item {
+    Rectangle {
+        id: moreHeader
         width: parent.width
         implicitHeight: moreRow.implicitHeight + Style.space(4)
+        radius: Style.space(4)
+        color: activeFocus ? Style.focusFillFor(form.fg, Commons.Color.accent) : "transparent"
+        border.width: activeFocus ? 1 : 0
+        border.color: Commons.Color.accent
+        activeFocusOnTab: true
+        function toggle() {
+            form.showMore = !form.showMore
+            if (form.showMore) form.owner.request(["records", "--limit", "10000"])
+        }
+        Keys.onReturnPressed: toggle()
+        Keys.onEnterPressed: toggle()
+        Keys.onSpacePressed: toggle()
 
         Row {
             id: moreRow
             anchors.verticalCenter: parent.verticalCenter
+            x: Style.space(4)
             spacing: Style.space(8)
             PlainLabel { text: form.showMore ? "󰅀" : "󰅂"; color: form.muted }
             PanelSectionHeader { text: "Records, reports & Obsidian"; foreground: form.fg; fontFamily: form.font }
@@ -360,10 +419,7 @@ Column {
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                form.showMore = !form.showMore
-                if (form.showMore) form.owner.request(["records", "--limit", "10000"])
-            }
+            onClicked: moreHeader.toggle()
         }
     }
 
@@ -376,6 +432,9 @@ Column {
         PanelSectionHeader { text: "Records"; foreground: form.fg; fontFamily: form.font }
         Dropdown {
             id: recordPicker
+            activeFocusOnTab: true
+            Keys.onPressed: function(event) { form.pickerKey(recordPicker, event) }
+            PickerRing {}
             width: parent.width
             showLabel: false
             options: form.recordOptions
@@ -525,6 +584,9 @@ Column {
             spacing: Style.space(6)
             Dropdown {
                 id: period
+                activeFocusOnTab: true
+                Keys.onPressed: function(event) { form.pickerKey(period, event) }
+                PickerRing {}
                 width: Style.space(120)
                 showLabel: false
                 value: "weekly"
@@ -545,6 +607,9 @@ Column {
         }
         Dropdown {
             id: scope
+            activeFocusOnTab: true
+            Keys.onPressed: function(event) { form.pickerKey(scope, event) }
+            PickerRing {}
             width: parent.width
             showLabel: false
             value: "all"

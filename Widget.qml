@@ -218,14 +218,90 @@ Panel {
         contentWidth: panel.fittedContentWidth(Style.space(400))
         contentHeight: panel.fittedContentHeight(panel.loadedContentHeight)
 
-        content: PanelKeyCatcher {
+        // Keyboard: Tab / Shift+Tab and the arrows walk every visible control
+        // in reading order; Enter or Space presses buttons and opens pickers
+        // (open a picker's list with Enter, arrows choose); Esc closes. Ctrl+Tab still hops to the
+        // neighbouring bar panel. Controls get keys first, so text fields keep
+        // Left/Right and typing, and an open picker keeps its own arrows.
+        content: FocusScope {
+            id: keyNav
             anchors.fill: parent
             implicitHeight: form.implicitHeight
-            blocked: form.editing
-            onCloseRequested: root.close()
-            onTabRequested: function(direction) { root.switchPanel(direction) }
+            focus: true
+
+            function focusables() {
+                var out = []
+                function walk(it) {
+                    if (!it || !it.visible) return
+                    if (it.activeFocusOnTab && it.enabled && it.width > 0) out.push(it)
+                    for (var i = 0; i < it.children.length; i++) walk(it.children[i])
+                }
+                walk(form)
+                return out
+            }
+            function reveal(item) {
+                var y = item.mapToItem(flick.contentItem, 0, 0).y
+                var max = Math.max(0, flick.contentHeight - flick.height)
+                if (y < flick.contentY) flick.contentY = Math.max(0, y - Style.space(8))
+                else if (y + item.height > flick.contentY + flick.height)
+                    flick.contentY = Math.min(max, y + item.height - flick.height + Style.space(8))
+            }
+            function focusAt(item) {
+                if (!item) return
+                item.forceActiveFocus(Qt.TabFocusReason)
+                reveal(item)
+            }
+            function move(step) {
+                var list = focusables()
+                if (!list.length) return
+                var cur = -1
+                for (var a = keyNav.Window.activeFocusItem; a && cur < 0; a = a.parent) cur = list.indexOf(a)
+                var next = cur < 0 ? (step > 0 ? 0 : list.length - 1) : (cur + step + list.length) % list.length
+                focusAt(list[next])
+            }
+            function focusFirst() { focusAt(focusables()[0]) }
+
+            // The panel hands focus to this scope after opening; pass it on to
+            // the first control whenever nothing inside holds it.
+            onActiveFocusChanged: if (activeFocus) Qt.callLater(function() {
+                if (keyNav.activeFocus && !keyNav.focusables().some(function(it) { return it.activeFocus })) keyNav.focusFirst()
+            })
+            // Clicking a picker focuses its inner trigger (and closing the list
+            // hands focus back there); move it to the picker so arrows walk on.
+            Window.onActiveFocusItemChanged: Qt.callLater(function() {
+                ring.place()
+                var a = keyNav.Window.activeFocusItem
+                if (!a || form.pickerOpen) return
+                for (var p = a.parent; p && p !== form; p = p.parent)
+                    if (p.popupOpen !== undefined && p.activeFocusOnTab) { p.forceActiveFocus(); return }
+            })
+
+            Connections {
+                target: root
+                function onOpenedChanged() { if (root.opened) Qt.callLater(keyNav.focusFirst) }
+                // Start/Stop swap places; keep focus on the button that replaced it.
+                function onTrackingChanged() { if (root.opened) Qt.callLater(keyNav.focusFirst) }
+            }
+
+            Keys.onPressed: function(event) {
+                if (form.pickerOpen) return
+                var k = event.key
+                if (k === Qt.Key_Escape) { root.close(); event.accepted = true; return }
+                if (k === Qt.Key_Tab || k === Qt.Key_Backtab) {
+                    var back = k === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier)
+                    if (event.modifiers & Qt.ControlModifier) root.switchPanel(back ? -1 : 1)
+                    else move(back ? -1 : 1)
+                    event.accepted = true
+                    return
+                }
+                var fwd = LayoutMirroring.enabled ? Qt.Key_Left : Qt.Key_Right
+                var bwd = LayoutMirroring.enabled ? Qt.Key_Right : Qt.Key_Left
+                if (k === Qt.Key_Down || k === fwd) { move(1); event.accepted = true; return }
+                if (k === Qt.Key_Up || k === bwd) { move(-1); event.accepted = true; return }
+            }
 
             Flickable {
+                id: flick
                 anchors.fill: parent
                 contentWidth: width
                 contentHeight: form.implicitHeight
@@ -237,6 +313,34 @@ Panel {
                     id: form
                     width: parent.width
                     owner: root
+                }
+
+                // The kit's own focus marks are faint; one accent ring follows
+                // the focused control. Pickers and the fold header draw their own.
+                Rectangle {
+                    id: ring
+                    property Item target: null
+                    function place() {
+                        var a = keyNav.Window.activeFocusItem
+                        var list = keyNav.focusables()
+                        while (a && list.indexOf(a) < 0) a = a.parent
+                        target = a && a.popupOpen === undefined && a !== form.foldHeader ? a : null
+                        if (!target) return
+                        var p = target.mapToItem(flick.contentItem, 0, 0)
+                        x = p.x - 2; y = p.y - 2
+                        width = target.width + 4; height = target.height + 4
+                    }
+                    visible: target !== null && target.visible && target.activeFocus
+                    z: 10
+                    color: "transparent"
+                    radius: Style.cornerRadius + 2
+                    border.width: 2
+                    border.color: Commons.Color.accent
+                }
+                Connections {
+                    target: form
+                    function onImplicitHeightChanged() { Qt.callLater(ring.place) }
+                    function onWidthChanged() { Qt.callLater(ring.place) }
                 }
             }
         }
