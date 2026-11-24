@@ -519,15 +519,25 @@ Column {
                 font.pixelSize: Style.font.body * 1.8
                 font.bold: true
             }
-            Caption {
+            Row {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                width: Math.min(implicitWidth, parent.width - totalValue.implicitWidth - Style.space(16))
-                horizontalAlignment: Text.AlignRight
-                text: form.owner.total
-                    ? Commons.I18n.formatNumber(form.owner.total.total_hours, 2) + " h · " + form.totalRange
-                      + (form.owner.total.includes_running_timer ? " · incl. running" : "")
-                    : ""
+                spacing: Style.space(6)
+                // Same dot as "Tracking" up top: the total counts the running timer.
+                Rectangle {
+                    visible: !!form.owner.total && form.owner.total.includes_running_timer
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(8); height: width; radius: width / 2
+                    color: Commons.Color.accent
+                }
+                Caption {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, form.width - totalValue.implicitWidth - Style.space(32))
+                    horizontalAlignment: Text.AlignRight
+                    text: form.owner.total
+                        ? Commons.I18n.formatNumber(form.owner.total.total_hours, 2) + " h · " + form.totalRange
+                        : ""
+                }
             }
         }
     }

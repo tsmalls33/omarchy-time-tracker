@@ -225,8 +225,8 @@ Panel {
         contentWidth: panel.fittedContentWidth(Style.space(400))
         contentHeight: panel.fittedContentHeight(panel.loadedContentHeight)
 
-        // Keyboard: Tab / Shift+Tab and the arrows walk every visible control
-        // in reading order; Enter or Space presses buttons and opens pickers
+        // Keyboard: Tab / Shift+Tab and Left/Right walk every visible control
+        // in reading order; Up/Down jump between rows; Enter or Space presses buttons and opens pickers
         // (open a picker's list with Enter, arrows choose); Esc closes. Ctrl+Tab still hops to the
         // neighbouring bar panel. Controls get keys first, so text fields keep
         // Left/Right and typing, and an open picker keeps its own arrows.
@@ -266,6 +266,32 @@ Panel {
                 var next = cur < 0 ? (step > 0 ? 0 : list.length - 1) : (cur + step + list.length) % list.length
                 focusAt(list[next])
             }
+            // Up/Down go by rows on screen: to the nearest row above or below,
+            // and in it to the control most under the current one. So Down
+            // from a picker reaches the next picker, not its "+" button.
+            function moveRow(dir) {
+                var list = focusables()
+                if (!list.length) return
+                var cur = null
+                for (var a = keyNav.Window.activeFocusItem; a && !cur; a = a.parent) if (list.indexOf(a) >= 0) cur = a
+                if (!cur) { focusAt(dir > 0 ? list[0] : list[list.length - 1]); return }
+                function box(it) {
+                    var p = it.mapToItem(form, 0, 0)
+                    return { l: p.x, r: p.x + it.width, t: p.y, b: p.y + it.height, it: it }
+                }
+                var c = box(cur)
+                var boxes = list.filter(function(it) { return it !== cur }).map(box).filter(function(o) {
+                    return dir > 0 ? o.t >= c.b - 2 : o.b <= c.t + 2
+                })
+                if (!boxes.length) { focusAt(dir > 0 ? list[0] : list[list.length - 1]); return }
+                // The nearest row: whatever overlaps the closest box vertically.
+                boxes.sort(function(x, y) { return dir > 0 ? x.t - y.t : y.b - x.b })
+                var near = boxes[0]
+                var row = boxes.filter(function(o) { return o.t < near.b && o.b > near.t })
+                function gap(o) { return Math.max(0, o.l - c.r, c.l - o.r) * 10000 + Math.abs(o.l - c.l) }
+                row.sort(function(x, y) { return gap(x) - gap(y) })
+                focusAt(row[0].it)
+            }
             function focusFirst() { focusAt(focusables()[0]) }
 
             // The panel hands focus to this scope after opening; pass it on to
@@ -303,8 +329,10 @@ Panel {
                 }
                 var fwd = LayoutMirroring.enabled ? Qt.Key_Left : Qt.Key_Right
                 var bwd = LayoutMirroring.enabled ? Qt.Key_Right : Qt.Key_Left
-                if (k === Qt.Key_Down || k === fwd) { move(1); event.accepted = true; return }
-                if (k === Qt.Key_Up || k === bwd) { move(-1); event.accepted = true; return }
+                if (k === Qt.Key_Down) { moveRow(1); event.accepted = true; return }
+                if (k === Qt.Key_Up) { moveRow(-1); event.accepted = true; return }
+                if (k === fwd) { move(1); event.accepted = true; return }
+                if (k === bwd) { move(-1); event.accepted = true; return }
             }
 
             Flickable {
@@ -334,13 +362,15 @@ Panel {
                         target = a && a.popupOpen === undefined && a !== form.foldHeader ? a : null
                         if (!target) return
                         var p = target.mapToItem(flick.contentItem, 0, 0)
-                        x = p.x - 2; y = p.y - 2
-                        width = target.width + 4; height = target.height + 4
+                        // Drawn on the control's own edge, never outside it, so the
+                        // scroll area can't clip it on full-width fields.
+                        x = p.x; y = p.y
+                        width = target.width; height = target.height
                     }
                     visible: target !== null && target.visible && target.activeFocus
                     z: 10
                     color: "transparent"
-                    radius: Style.cornerRadius + 2
+                    radius: Style.cornerRadius
                     border.width: 2
                     border.color: Commons.Color.accent
                 }
