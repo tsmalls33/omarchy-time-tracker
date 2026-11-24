@@ -29,7 +29,8 @@ Panel {
     property string obsidianPath: ""
     property string obsidianUri: ""
     property real now: Date.now()
-    property var queued: null
+    property var queued: []       // requests waiting for the running one, in order
+    property var total: null      // last "Time spent" result (report without export)
 
     readonly property bool vertical: bar ? bar.vertical : false
     readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
@@ -62,12 +63,16 @@ Panel {
         var s = Math.floor(seconds || 0)
         return Math.floor(s / 3600) + ":" + String(Math.floor(s / 60) % 60).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0")
     }
+    function isTotal(args) { return args[0] === "report" && args.indexOf("--pdf") < 0 && args.indexOf("--obsidian") < 0 }
     function refresh() { if (!worker.running) request([]) }
     function request(args) {
         if (worker.running) {
-            if (args.length) queued = args   // run as soon as the current request ends
+            // Run as soon as the current request ends. A newer time-spent
+            // query replaces one still waiting; actions all keep their turn.
+            if (args.length) queued = queued.filter(function(q) { return !(isTotal(q) && isTotal(args)) }).concat([args])
             return
         }
+        worker.args = args
         worker.isAction = args.length > 0
         worker.action = args.length ? args[0] : ""
         worker.received = false
@@ -90,13 +95,14 @@ Panel {
         id: worker
         property bool isAction: false
         property string action: ""
+        property var args: []
         property bool received: false
         onRunningChanged: {
             if (running) { watchdog.restart(); return }
             watchdog.stop()
-            if (root.queued) {
-                var next = root.queued
-                root.queued = null
+            if (root.queued.length) {
+                var next = root.queued[0]
+                root.queued = root.queued.slice(1)
                 Qt.callLater(function() { root.request(next) })
             }
         }
@@ -118,6 +124,7 @@ Panel {
                     root.projects = data.projects
                     root.now = Date.now()
                     if (worker.action === "records") root.records = data.result
+                    if (root.isTotal(worker.args)) root.total = data.result
                     if (data.result && data.result.edited) {
                         var e = data.result.edited
                         root.records = root.records.map(function(r) { return r.id === e.id ? e : r })

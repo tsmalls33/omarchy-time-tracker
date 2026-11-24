@@ -125,7 +125,14 @@ def period_bounds(period, day):
 def report(db, args, now):
     tz = ZoneInfo(setting(db, 'timezone'))
     day = date.fromisoformat(args.date) if args.date else datetime.fromtimestamp(now, tz).date()
-    first, last = period_bounds(args.period, day)
+    if args.period == 'all':
+        # Everything ever tracked: from the first session's day to past the latest one.
+        lo_ts, hi_ts = db.execute('SELECT MIN(start), MAX(COALESCE(end, start)) FROM sessions').fetchone()
+        today = datetime.fromtimestamp(now, tz).date()
+        first = datetime.fromtimestamp(lo_ts, tz).date() if lo_ts is not None else today
+        last = max(today, datetime.fromtimestamp(hi_ts, tz).date() if hi_ts is not None else today) + timedelta(days=1)
+    else:
+        first, last = period_bounds(args.period, day)
     lo = datetime.combine(first, time.min, tz).timestamp()
     hi = datetime.combine(last, time.min, tz).timestamp()
     cid = company(db, args.company)['id'] if args.company else None
@@ -150,6 +157,9 @@ def report(db, args, now):
             key = (local_day.isoformat(), row['company'], row['project'])
             daily[key] = daily.get(key, 0) + stop - start
             start = stop
+    if args.period == 'all' and daily:
+        # Start where the chosen company/project was first logged, not the first session overall.
+        first = date.fromisoformat(min(d for d, _, _ in daily))
     rows = [dict(date=d, company=c, project=p, seconds=round(s, 3), hours=round(s/3600, 6))
             for (d, c, p), s in sorted(daily.items(), key=lambda x: (x[0][0], x[0][1], x[0][2] or ''))]
     totals = {}
@@ -451,7 +461,7 @@ def parser():
         if cmd == 'records':
             child.add_argument('--limit', type=int, default=100)
         if cmd == 'report':
-            child.add_argument('period', choices=['daily', 'weekly', 'monthly', 'yearly'])
+            child.add_argument('period', choices=['daily', 'weekly', 'monthly', 'yearly', 'all'])
             child.add_argument('--date', help='Any date in the requested period, YYYY-MM-DD')
             formats = child.add_mutually_exclusive_group()
             formats.add_argument('--pdf', action='store_true', help='Export a styled PDF report')

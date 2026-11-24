@@ -34,7 +34,7 @@ Column {
     readonly property bool editing: noteField.activeFocus || startAtField.activeFocus || newCompanyField.activeFocus || newProjectField.activeFocus
         || reportDate.activeFocus || vaultPath.activeFocus || pushSince.activeFocus || deleteConfirmation.activeFocus || editStart.activeFocus || editEnd.activeFocus
         || pickerOpen
-    readonly property bool pickerOpen: companyPicker.popupOpen || projectPicker.popupOpen || period.popupOpen || scope.popupOpen || recordPicker.popupOpen
+    readonly property bool pickerOpen: totalSpanPicker.popupOpen || totalPicker.popupOpen || companyPicker.popupOpen || projectPicker.popupOpen || period.popupOpen || scope.popupOpen || recordPicker.popupOpen
 
     readonly property var companyOptions: owner.companies.map(function(c) { return { value: c.name, label: c.name } })
     readonly property var projectOptions: {
@@ -50,7 +50,7 @@ Column {
     readonly property var completedRecords: owner.records.filter(function(r) { return r.end !== null })
     readonly property var recordOptions: completedRecords.map(function(r) {
         return { value: String(r.id), label: r.start.slice(0, 16).replace("T", " ") + "  " + owner.duration(r.seconds)
-                 + "  " + r.company + (r.project ? " · " + r.project : "") }
+                 + "  " + (r.project || form.noProject), description: r.company }
     })
 
     spacing: Style.space(12)
@@ -80,6 +80,69 @@ Column {
         noteField.clear()
         startAtField.clear()
     }
+    // ---------- time spent: one project's total for a time frame ----------
+    property string totalPick: ""      // JSON [company, project]; project "" = whole company
+    property string totalSpan: "all"
+    readonly property var totalOptions: {
+        var out = []
+        owner.companies.forEach(function(c) {
+            out.push({ value: JSON.stringify([c.name, ""]), label: "All projects", description: c.name })
+            owner.projects.filter(function(p) { return p.company_id === c.id }).forEach(function(p) {
+                out.push({ value: JSON.stringify([c.name, p.name]), label: p.name, description: c.name })
+            })
+        })
+        return out
+    }
+    function isoDay(d) {
+        return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0")
+    }
+    // First pick: the running timer's project, else the selected one.
+    function defaultTotalPick() {
+        if (totalPick !== "" || !owner.opened) return false
+        var r = owner.running, st = owner.trackerState
+        var c = r ? r.company : st.selected_company, p = r ? r.project : st.selected_project
+        if (!c) return false
+        totalPick = JSON.stringify([c, p || ""])
+        return true
+    }
+    function refreshTotal() {
+        if (totalPick === "") return
+        var pick = JSON.parse(totalPick)
+        var d = new Date()
+        var span = {
+            today: ["daily", null], yesterday: ["daily", -1], week: ["weekly", null], lastweek: ["weekly", -7],
+            month: ["monthly", null], lastmonth: ["monthly", "lastmonth"], year: ["yearly", null], all: ["all", null]
+        }[totalSpan]
+        var args = ["report", span[0]]
+        if (span[1] === "lastmonth") { d.setDate(0); args.push("--date", isoDay(d)) }
+        else if (span[1] !== null) { d.setDate(d.getDate() + span[1]); args.push("--date", isoDay(d)) }
+        args.push("--company", pick[0])
+        if (pick[1]) args.push("--project", pick[1])
+        owner.request(args)
+    }
+    function hoursMinutes(seconds) {
+        var m = Math.floor((seconds || 0) / 60)
+        return Math.floor(m / 60) + "h " + String(m % 60).padStart(2, "0") + "m"
+    }
+    readonly property string totalRange: {
+        var t = owner.total
+        if (!t) return ""
+        var end = new Date(t.end_exclusive + "T12:00:00")
+        end.setDate(end.getDate() - 1)
+        var last = isoDay(end)
+        if (t.period === "all") return "since " + t.start
+        return t.start === last ? t.start : t.start + " → " + last
+    }
+    onTotalPickChanged: refreshTotal()
+    onTotalSpanChanged: refreshTotal()
+    // A running timer keeps counting; ask again now and then while open.
+    Timer {
+        interval: 60000
+        repeat: true
+        running: form.owner.opened && form.tracking
+        onTriggered: form.refreshTotal()
+    }
+
     function report(format) {
         var args = ["report", period.value]
         if (reportDate.text.trim()) args.push("--date", reportDate.text.trim())
@@ -91,7 +154,12 @@ Column {
 
     Connections {
         target: form.owner
-        function onOpenedChanged() { if (form.owner.opened) form.loadSelection() }
+        function onOpenedChanged() {
+            if (!form.owner.opened) return
+            form.loadSelection()
+            if (!form.defaultTotalPick()) form.refreshTotal()
+        }
+        function onTrackerStateChanged() { form.defaultTotalPick() }
         function onCompaniesChanged() {
             if (form.companyName === "" && form.owner.companies.length) form.loadSelection()
         }
@@ -390,6 +458,82 @@ Column {
 
     PanelSeparator { width: parent.width; foreground: form.fg }
 
+    // ---------- time spent ----------
+    Column {
+        width: parent.width
+        spacing: Style.space(8)
+
+        PanelSectionHeader { text: "Time spent"; foreground: form.fg; fontFamily: form.font }
+        Row {
+            width: parent.width
+            spacing: Style.space(6)
+            Dropdown {
+                id: totalSpanPicker
+                activeFocusOnTab: true
+                Keys.onPressed: function(event) { form.pickerKey(totalSpanPicker, event) }
+                PickerRing {}
+                width: Style.space(130)
+                showLabel: false
+                value: form.totalSpan
+                options: [{ value: "today", label: "Today" }, { value: "yesterday", label: "Yesterday" },
+                          { value: "week", label: "This week" }, { value: "lastweek", label: "Last week" },
+                          { value: "month", label: "This month" }, { value: "lastmonth", label: "Last month" },
+                          { value: "year", label: "This year" }, { value: "all", label: "All time" }]
+                foreground: form.fg
+                fontFamily: form.font
+                onChanged: function(v) { form.totalSpan = v }
+            }
+            SearchableDropdown {
+                id: totalPicker
+                activeFocusOnTab: true
+                Keys.onPressed: function(event) { form.pickerKey(totalPicker, event) }
+                PickerRing {}
+                width: parent.width - totalSpanPicker.width - parent.spacing
+                showLabel: false
+                options: form.totalOptions
+                value: form.totalPick
+                triggerLabel: "Pick a project"
+                placeholderText: "Search projects…"
+                foreground: form.fg
+                fontFamily: form.font
+                onChanged: function(v) { form.totalPick = v }
+            }
+        }
+        // The closed picker shows the project; its client sits faded below.
+        Caption {
+            x: totalPicker.x + Style.space(2)
+            width: totalPicker.width
+            visible: form.totalPick !== ""
+            text: form.totalPick !== "" ? JSON.parse(form.totalPick)[0] : ""
+            elide: Text.ElideRight
+            wrapMode: Text.NoWrap
+        }
+        Item {
+            width: parent.width
+            implicitHeight: totalValue.implicitHeight
+            PlainLabel {
+                id: totalValue
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: form.owner.total ? form.hoursMinutes(form.owner.total.total_seconds) : "–"
+                font.pixelSize: Style.font.body * 1.8
+                font.bold: true
+            }
+            Caption {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, parent.width - totalValue.implicitWidth - Style.space(16))
+                horizontalAlignment: Text.AlignRight
+                text: form.owner.total
+                    ? Commons.I18n.formatNumber(form.owner.total.total_hours, 2) + " h · " + form.totalRange
+                      + (form.owner.total.includes_running_timer ? " · incl. running" : "")
+                    : ""
+            }
+        }
+    }
+
+    PanelSeparator { width: parent.width; foreground: form.fg }
+
     // ---------- folded: reports, Obsidian, records ----------
     Rectangle {
         id: moreHeader
@@ -430,7 +574,7 @@ Column {
 
         // Records
         PanelSectionHeader { text: "Records"; foreground: form.fg; fontFamily: form.font }
-        Dropdown {
+        SearchableDropdown {
             id: recordPicker
             activeFocusOnTab: true
             Keys.onPressed: function(event) { form.pickerKey(recordPicker, event) }
@@ -441,7 +585,16 @@ Column {
             value: form.recordValue
             foreground: form.fg
             fontFamily: form.font
+            placeholderText: "Search records…"
             onChanged: function(v) { form.recordValue = v }
+        }
+        Caption {
+            readonly property var opt: form.recordOptions.find(function(o) { return o.value === form.recordValue })
+            visible: !!opt
+            width: parent.width
+            text: opt ? opt.description : ""
+            elide: Text.ElideRight
+            wrapMode: Text.NoWrap
         }
         Row {
             spacing: Style.space(8)
@@ -465,7 +618,7 @@ Column {
                     form.editId = 0
                     form.deletionId = parseInt(form.recordValue, 10)
                     var opt = form.recordOptions.find(function(o) { return o.value === form.recordValue })
-                    form.deletionLabel = opt ? opt.label : "#" + form.recordValue
+                    form.deletionLabel = opt ? opt.label + " (" + opt.description + ")" : "#" + form.recordValue
                     form.deletionCommand = "delete-record"
                     deleteConfirmation.clear()
                 }
