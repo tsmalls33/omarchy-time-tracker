@@ -55,6 +55,12 @@ Panel {
     // Only the elapsed time shows in the bar; the tooltip names the project.
     readonly property string barLabel: tracking && !vertical ? duration(elapsed) : ""
 
+    // The bar underlines the widget whose panel is open, at least 10px wide.
+    // A hidden widget has nothing to underline: a length that rounds to 0
+    // hides the mark (the bar only honours hints above 0).
+    readonly property var openPanelIndicatorWidth: hiddenInBar ? 0.1 : undefined
+    readonly property var openPanelIndicatorHeight: hiddenInBar ? 0.1 : undefined
+
     implicitWidth: drawn ? button.implicitWidth : 0
     implicitHeight: shown ? (vertical ? button.implicitHeight : barSize) : 0
     visible: shown
@@ -220,6 +226,7 @@ Panel {
         anchorItem: button
         owner: root
         bar: root.bar
+        centerOnBar: true   // opens in the middle of the screen, not under the icon
         open: root.opened
         focusTarget: panel.loadedContent
         contentWidth: panel.fittedContentWidth(Style.space(400))
@@ -294,11 +301,6 @@ Panel {
             }
             function focusFirst() { focusAt(focusables()[0]) }
 
-            // The panel hands focus to this scope after opening; pass it on to
-            // the first control whenever nothing inside holds it.
-            onActiveFocusChanged: if (activeFocus) Qt.callLater(function() {
-                if (keyNav.activeFocus && !keyNav.focusables().some(function(it) { return it.activeFocus })) keyNav.focusFirst()
-            })
             // Clicking a picker focuses its inner trigger (and closing the list
             // hands focus back there); move it to the picker so arrows walk on.
             Window.onActiveFocusItemChanged: Qt.callLater(function() {
@@ -311,9 +313,19 @@ Panel {
 
             Connections {
                 target: root
-                function onOpenedChanged() { if (root.opened) Qt.callLater(keyNav.focusFirst) }
-                // Start/Stop swap places; keep focus on the button that replaced it.
-                function onTrackingChanged() { if (root.opened) Qt.callLater(keyNav.focusFirst) }
+                // Open with nothing focused, so typing or Space can't open a
+                // picker; the first arrow or Tab picks the first control.
+                function onOpenedChanged() {
+                    if (!root.opened) return
+                    // The scope remembers the last focused control; forget it.
+                    (function clear(it) {
+                        for (var i = 0; i < it.children.length; i++) {
+                            if (it.children[i].focus) it.children[i].focus = false
+                            clear(it.children[i])
+                        }
+                    })(flick)
+                    keyNav.forceActiveFocus()
+                }
             }
 
             Keys.onPressed: function(event) {
